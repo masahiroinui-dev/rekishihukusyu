@@ -3,10 +3,11 @@ import pandas as pd
 from streamlit_drawable_canvas import st_canvas
 import easyocr
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 import random
 import os
 import unicodedata
+import cv2
 
 # --- 判定ロジックの強化 ---
 def normalize_text(text):
@@ -35,7 +36,43 @@ def normalize_text(text):
 # --- OCRモデルの読み込み ---
 @st.cache_resource
 def load_ocr():
+    # サーバー負荷を抑えるためGPUをオフに設定
     return easyocr.Reader(['ja', 'en'], gpu=False)
+
+# --- 画像の前処理 (精度大幅向上用) ---
+def preprocess_image(image_data):
+    """
+    エッジ強調と適応的二値化でOCR精度を最大化する処理
+    """
+    # RGBAからRGBに変換し、NumPy配列(OpenCV形式)にする
+    img = Image.fromarray(image_data.astype('uint8'), 'RGBA').convert('RGB')
+    img_np = np.array(img)
+    
+    # 1. グレースケール化
+    gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+    
+    # 2. ノイズ除去 (中値フィルタ)
+    # 手書きの小さなゴミを除去
+    gray = cv2.medianBlur(gray, 3)
+    
+    # 3. エッジ強調 (アンシャープマスキング)
+    # ぼかした画像との差分を利用して輪郭を強調
+    gaussian_3 = cv2.GaussianBlur(gray, (0, 0), 2.0)
+    unsharp_image = cv2.addWeighted(gray, 2.0, gaussian_3, -1.0, 0)
+    
+    # 4. 適応的二値化 (Adaptive Thresholding)
+    # 画像の局所的な明るさに合わせて閾値を調整するため、かすれた文字に強い
+    binary = cv2.adaptiveThreshold(
+        unsharp_image, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+        cv2.THRESH_BINARY, 11, 2
+    )
+    
+    # 5. モルフォロジー変換 (膨張・収縮)
+    # 文字の線を少し太らせて連結を強める
+    kernel = np.ones((2,2), np.uint8)
+    processed_img = cv2.erode(binary, kernel, iterations=1) 
+    
+    return processed_img
 
 # --- Data Loading ---
 @st.cache_data
@@ -54,7 +91,7 @@ def main():
     st.set_page_config(page_title="手書き自動採点アプリ", layout="centered")
 
     st.title("📝 手書き自動採点アプリ")
-    st.caption("全角半角や文字の大小を柔軟に判定するモードを搭載しました。")
+    st.caption("エッジ強調と適応的二値化により、認識精度をさらに強化しました。")
 
     reader = load_ocr()
     file_name = "questions.xlsx"
@@ -79,9 +116,10 @@ def main():
 
     st.write("▼ 下の枠に解答を書いてください")
     
+    # ペンの太さを少し太く設定（認識率向上のため）
     canvas_result = st_canvas(
         fill_color="rgba(255, 165, 0, 0.3)",
-        stroke_width=4,
+        stroke_width=6,
         stroke_color="#000000",
         background_color="#ffffff",
         height=250,
@@ -95,11 +133,12 @@ def main():
     with col1:
         if st.button("採点する", use_container_width=True):
             if canvas_result.image_data is not None:
-                img = Image.fromarray(canvas_result.image_data.astype('uint8'), 'RGBA').convert('RGB')
-                img_np = np.array(img)
-                
-                with st.spinner('AIが採点中...'):
-                    results = reader.readtext(img_np)
+                with st.spinner('AIが画像を解析中...'):
+                    # 画像の前処理を実行 (エッジ強調・適応二値化)
+                    processed_img = preprocess_image(canvas_result.image_data)
+                    
+                    # OCR実行
+                    results = reader.readtext(processed_img)
                     raw_recognized = "".join([res[1] for res in results])
                     
                     # 判定用の正規化
