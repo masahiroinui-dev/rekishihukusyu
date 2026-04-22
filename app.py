@@ -6,20 +6,40 @@ import numpy as np
 from PIL import Image
 import random
 import os
+import unicodedata
 
-# --- OCRモデルの読み込み (キャッシュ化して高速化) ---
+# --- 判定ロジックの強化 ---
+def normalize_text(text):
+    """
+    文字の揺れ（全角/半角、大文字/小文字、拗音の大小など）を吸収する関数
+    """
+    if not text:
+        return ""
+    
+    # 1. 全角を半角に、大文字を小文字に変換 (NFKC正規化)
+    text = unicodedata.normalize('NFKC', text).lower()
+    
+    # 2. 判定に影響しやすい文字の置換（大小を区別しない設定）
+    replace_map = {
+        'ゃ': 'や', 'ゅ': 'ゆ', 'ょ': 'よ',
+        'ぁ': 'あ', 'ぃ': 'い', 'ぅ': 'う', 'ぇ': 'え', 'ぉ': 'お',
+        'っ': 'つ',
+        'ー': '', '-': '',  # 長音やハイフンを無視する場合
+    }
+    for old, new in replace_map.items():
+        text = text.replace(old, new)
+        
+    # 3. 空白の除去
+    return text.replace(" ", "").strip()
+
+# --- OCRモデルの読み込み ---
 @st.cache_resource
 def load_ocr():
-    # サーバー負荷を抑えるためGPUをオフに設定
     return easyocr.Reader(['ja', 'en'], gpu=False)
 
 # --- Data Loading ---
 @st.cache_data
 def load_data(file_path):
-    """
-    Excelファイルを読み込む関数
-    A列: 問題, B列: 解答 (ヘッダーなし)
-    """
     if not os.path.exists(file_path):
         return None
     try:
@@ -34,9 +54,8 @@ def main():
     st.set_page_config(page_title="手書き自動採点アプリ", layout="centered")
 
     st.title("📝 手書き自動採点アプリ")
-    st.caption("AIがあなたの手書き解答を読み取って採点します。")
+    st.caption("全角半角や文字の大小を柔軟に判定するモードを搭載しました。")
 
-    # OCRとデータの準備
     reader = load_ocr()
     file_name = "questions.xlsx"
     df = load_data(file_name)
@@ -45,7 +64,6 @@ def main():
         st.warning(f"'{file_name}' が見つかりません。")
         return
 
-    # セッション状態の初期化
     if 'q_index' not in st.session_state:
         st.session_state.q_index = random.randint(0, len(df) - 1)
     if 'answer_status' not in st.session_state:
@@ -77,20 +95,21 @@ def main():
     with col1:
         if st.button("採点する", use_container_width=True):
             if canvas_result.image_data is not None:
-                # 画像処理
                 img = Image.fromarray(canvas_result.image_data.astype('uint8'), 'RGBA').convert('RGB')
                 img_np = np.array(img)
                 
                 with st.spinner('AIが採点中...'):
                     results = reader.readtext(img_np)
-                    # 認識した文字を結合
-                    recognized_text = "".join([res[1] for res in results]).replace(" ", "").strip()
-                    correct_answer = str(current_q['answer']).strip()
+                    raw_recognized = "".join([res[1] for res in results])
                     
-                    if recognized_text == correct_answer:
-                        st.session_state.answer_status = ("success", f"正解です！ (認識結果: {recognized_text})")
+                    # 判定用の正規化
+                    norm_recognized = normalize_text(raw_recognized)
+                    norm_correct = normalize_text(str(current_q['answer']))
+                    
+                    if norm_recognized == norm_correct:
+                        st.session_state.answer_status = ("success", f"正解です！\n(認識: {raw_recognized})")
                     else:
-                        st.session_state.answer_status = ("error", f"不正解... (認識結果: {recognized_text} / 正解: {correct_answer})")
+                        st.session_state.answer_status = ("error", f"不正解...\n認識結果: {raw_recognized}\n正解: {current_q['answer']}")
                 st.rerun()
 
     with col2:
@@ -106,7 +125,6 @@ def main():
             st.session_state.canvas_key += 1
             st.rerun()
 
-    # 採点結果の表示
     if st.session_state.answer_status:
         status, msg = st.session_state.answer_status
         if status == "success":
