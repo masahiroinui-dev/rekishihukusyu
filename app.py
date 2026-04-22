@@ -11,8 +11,7 @@ def load_data(file_path):
     if not os.path.exists(file_path):
         return None
     try:
-        # ヘッダーがない場合を想定し、header=None、列名を指定
-        # A列(0)をquestion, B列(1)をanswerとして読み込む
+        # A列(0)をquestion, B列(1)をanswerとして読み込む（ヘッダーなし）
         df = pd.read_excel(file_path, header=None, names=['question', 'answer'])
         return df
     except Exception as e:
@@ -34,7 +33,7 @@ def main():
     df = load_data(file_name)
 
     if df is None:
-        st.warning(f"'{file_name}' が見つかりません。同じフォルダにExcelファイルを作成してアップロードしてください。")
+        st.warning(f"'{file_name}' が見つかりません。同じフォルダにExcelファイルを配置してアップロードしてください。")
         return
 
     # セッション状態の初期化
