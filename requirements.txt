@@ -3,5 +3,6 @@ pandas
 openpyxl
 streamlit-drawable-canvas
 easyocr
+opencv-python-headless
 numpy
 Pillow
