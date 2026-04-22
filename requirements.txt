@@ -2,3 +2,6 @@ streamlit
 pandas
 openpyxl
 streamlit-drawable-canvas
+easyocr
+numpy
+Pillow
