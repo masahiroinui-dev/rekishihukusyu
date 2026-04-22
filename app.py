@@ -1,8 +1,17 @@
 import streamlit as st
 import pandas as pd
 from streamlit_drawable_canvas import st_canvas
+import easyocr
+import numpy as np
+from PIL import Image
 import random
 import os
+
+# --- OCRモデルの読み込み (キャッシュ化して高速化) ---
+@st.cache_resource
+def load_ocr():
+    # サーバー負荷を抑えるためGPUをオフに設定
+    return easyocr.Reader(['ja', 'en'], gpu=False)
 
 # --- Data Loading ---
 @st.cache_data
@@ -14,9 +23,7 @@ def load_data(file_path):
     if not os.path.exists(file_path):
         return None
     try:
-        # A列(0)をquestion, B列(1)をanswerとして読み込み
         df = pd.read_excel(file_path, header=None, names=['question', 'answer'])
-        # 問題が空の行を削除
         df = df.dropna(subset=['question'])
         return df
     except Exception as e:
@@ -24,29 +31,28 @@ def load_data(file_path):
         return None
 
 def main():
-    st.set_page_config(page_title="手書き学習アプリ", layout="centered")
+    st.set_page_config(page_title="手書き自動採点アプリ", layout="centered")
 
-    st.title("📝 手書き学習アプリ")
-    st.caption("Excelから問題を読み込み、手書きで解答するアプリです。")
+    st.title("📝 手書き自動採点アプリ")
+    st.caption("AIがあなたの手書き解答を読み取って採点します。")
 
-    # Excelファイルのパス指定
+    # OCRとデータの準備
+    reader = load_ocr()
     file_name = "questions.xlsx"
     df = load_data(file_name)
 
     if df is None or df.empty:
-        st.warning(f"'{file_name}' が見つかりません。GitHubにExcelファイルをアップロードしてください。")
-        st.info("Excelは、A列に「問題」、B列に「解答」を入力してください。")
+        st.warning(f"'{file_name}' が見つかりません。")
         return
 
     # セッション状態の初期化
     if 'q_index' not in st.session_state:
         st.session_state.q_index = random.randint(0, len(df) - 1)
-    if 'show_answer' not in st.session_state:
-        st.session_state.show_answer = False
+    if 'answer_status' not in st.session_state:
+        st.session_state.answer_status = None
     if 'canvas_key' not in st.session_state:
         st.session_state.canvas_key = 0
 
-    # 現在の問題を取得
     current_q = df.iloc[st.session_state.q_index]
 
     st.markdown("---")
@@ -55,8 +61,6 @@ def main():
 
     st.write("▼ 下の枠に解答を書いてください")
     
-    # 手書きキャンバスの設定
-    # keyを更新することで「書き直し」時にキャンバスをリセットします
     canvas_result = st_canvas(
         fill_color="rgba(255, 165, 0, 0.3)",
         stroke_width=4,
@@ -68,36 +72,48 @@ def main():
         key=f"canvas_{st.session_state.canvas_key}",
     )
 
-    # ボタン配置
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        if st.button("答えを確認", use_container_width=True):
-            st.session_state.show_answer = True
-            st.rerun()
+        if st.button("採点する", use_container_width=True):
+            if canvas_result.image_data is not None:
+                # 画像処理
+                img = Image.fromarray(canvas_result.image_data.astype('uint8'), 'RGBA').convert('RGB')
+                img_np = np.array(img)
+                
+                with st.spinner('AIが採点中...'):
+                    results = reader.readtext(img_np)
+                    # 認識した文字を結合
+                    recognized_text = "".join([res[1] for res in results]).replace(" ", "").strip()
+                    correct_answer = str(current_q['answer']).strip()
+                    
+                    if recognized_text == correct_answer:
+                        st.session_state.answer_status = ("success", f"正解です！ (認識結果: {recognized_text})")
+                    else:
+                        st.session_state.answer_status = ("error", f"不正解... (認識結果: {recognized_text} / 正解: {correct_answer})")
+                st.rerun()
 
     with col2:
         if st.button("書き直す", use_container_width=True):
             st.session_state.canvas_key += 1
+            st.session_state.answer_status = None
             st.rerun()
 
     with col3:
         if st.button("次の問題へ ➔", use_container_width=True):
             st.session_state.q_index = random.randint(0, len(df) - 1)
-            st.session_state.show_answer = False
+            st.session_state.answer_status = None
             st.session_state.canvas_key += 1
             st.rerun()
 
-    # 解答の表示
-    if st.session_state.show_answer:
-        st.markdown("---")
-        st.subheader("正解:")
-        st.success(f"{current_q['answer']}")
-        st.write("自分の書いた文字と合っているか確認しましょう！")
-
-    # サイドバーに登録数を表示
-    st.sidebar.header("学習ステータス")
-    st.sidebar.write(f"登録問題数: {len(df)} 問")
+    # 採点結果の表示
+    if st.session_state.answer_status:
+        status, msg = st.session_state.answer_status
+        if status == "success":
+            st.success(msg)
+            st.balloons()
+        else:
+            st.error(msg)
 
 if __name__ == "__main__":
     main()
