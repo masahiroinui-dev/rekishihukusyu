@@ -3,165 +3,126 @@ import pandas as pd
 from streamlit_drawable_canvas import st_canvas
 import easyocr
 import numpy as np
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, ImageFilter
 import random
-import os
-import unicodedata
+import difflib
 import cv2
 
-# --- 判定ロジックの強化 ---
-def normalize_text(text):
-    """
-    文字の揺れ（全角/半角、大文字/小文字、拗音の大小など）を吸収する関数
-    """
-    if not text:
-        return ""
-    
-    # 1. 全角を半角に、大文字を小文字に変換 (NFKC正規化)
-    text = unicodedata.normalize('NFKC', text).lower()
-    
-    # 2. 判定に影響しやすい文字の置換（大小を区別しない設定）
-    replace_map = {
-        'ゃ': 'や', 'ゅ': 'ゆ', 'ょ': 'よ',
-        'ぁ': 'あ', 'ぃ': 'い', 'ぅ': 'う', 'ぇ': 'え', 'ぉ': 'お',
-        'っ': 'つ',
-        'ー': '', '-': '',  # 長音やハイフンを無視する場合
-    }
-    for old, new in replace_map.items():
-        text = text.replace(old, new)
-        
-    # 3. 空白の除去
-    return text.replace(" ", "").strip()
+# ページ設定
+st.set_page_config(page_title="英単語手書き採点アプリ", layout="centered")
 
-# --- OCRモデルの読み込み ---
 @st.cache_resource
 def load_ocr():
-    # サーバー負荷を抑えるためGPUをオフに設定
-    return easyocr.Reader(['ja', 'en'], gpu=False)
+    # アルファベットのみをターゲットにロード
+    return easyocr.Reader(['en'], gpu=False)
 
-# --- 画像の前処理 (精度大幅向上用) ---
-def preprocess_image(image_data):
-    """
-    エッジ強調と適応的二値化でOCR精度を最大化する処理
-    """
-    # RGBAからRGBに変換し、NumPy配列(OpenCV形式)にする
-    img = Image.fromarray(image_data.astype('uint8'), 'RGBA').convert('RGB')
-    img_np = np.array(img)
-    
-    # 1. グレースケール化
-    gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
-    
-    # 2. ノイズ除去 (中値フィルタ)
-    # 手書きの小さなゴミを除去
-    gray = cv2.medianBlur(gray, 3)
-    
-    # 3. エッジ強調 (アンシャープマスキング)
-    # ぼかした画像との差分を利用して輪郭を強調
-    gaussian_3 = cv2.GaussianBlur(gray, (0, 0), 2.0)
-    unsharp_image = cv2.addWeighted(gray, 2.0, gaussian_3, -1.0, 0)
-    
-    # 4. 適応的二値化 (Adaptive Thresholding)
-    # 画像の局所的な明るさに合わせて閾値を調整するため、かすれた文字に強い
-    binary = cv2.adaptiveThreshold(
-        unsharp_image, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-        cv2.THRESH_BINARY, 11, 2
-    )
-    
-    # 5. モルフォロジー変換 (膨張・収縮)
-    # 文字の線を少し太らせて連結を強める
-    kernel = np.ones((2,2), np.uint8)
-    processed_img = cv2.erode(binary, kernel, iterations=1) 
-    
-    return processed_img
+reader = load_ocr()
 
-# --- Data Loading ---
 @st.cache_data
-def load_data(file_path):
-    if not os.path.exists(file_path):
-        return None
+def load_data():
     try:
-        df = pd.read_excel(file_path, header=None, names=['question', 'answer'])
-        df = df.dropna(subset=['question'])
+        df = pd.read_excel("questions.xlsx")
+        df.columns = df.columns.str.strip()
+        df = df.dropna(subset=["sentence", "word", "meaning"])
         return df
     except Exception as e:
-        st.error(f"Excelの読み込み中にエラーが発生しました: {e}")
-        return None
+        st.error(f"エラー: {e}")
+        return pd.DataFrame(columns=["sentence", "word", "meaning"])
 
-def main():
-    st.set_page_config(page_title="手書き自動採点アプリ", layout="centered")
+df = load_data()
 
-    st.title("📝 手書き自動採点アプリ")
-    st.caption("エッジ強調と適応的二値化により、認識精度をさらに強化しました。")
+# サイドバー設定
+st.sidebar.title("🖌️ 書き心地と精度の調整")
+stroke_width = st.sidebar.slider("ペンの太さ", 1, 15, 7)
+st.sidebar.info("【精度向上のコツ】\n・dの縦棒を長めに書く\n・aの丸をしっかり閉じる\n・gの尻尾を明確に下げる")
 
-    reader = load_ocr()
-    file_name = "questions.xlsx"
-    df = load_data(file_name)
+if 'q_index' not in st.session_state:
+    st.session_state.q_index = random.randint(0, len(df)-1) if not df.empty else 0
+if 'answer_status' not in st.session_state:
+    st.session_state.answer_status = None
 
-    if df is None or df.empty:
-        st.warning(f"'{file_name}' が見つかりません。")
-        return
+st.title("📝 例文穴埋め手書き練習")
 
-    if 'q_index' not in st.session_state:
-        st.session_state.q_index = random.randint(0, len(df) - 1)
-    if 'answer_status' not in st.session_state:
-        st.session_state.answer_status = None
-    if 'canvas_key' not in st.session_state:
-        st.session_state.canvas_key = 0
-
-    current_q = df.iloc[st.session_state.q_index]
-
-    st.markdown("---")
-    st.subheader("【問題】")
-    st.info(current_q['question'])
-
-    st.write("▼ 下の枠に解答を書いてください")
+if not df.empty:
+    current_question = df.iloc[st.session_state.q_index]
     
-    # ペンの太さを少し太く設定（認識率向上のため）
+    with st.container():
+        st.info(f"💡 **意味**: {current_question['meaning']}")
+        raw_sentence = str(current_question['sentence'])
+        display_sentence = raw_sentence.replace("[ ]", " ___ ( ? ) ___ ")
+        st.markdown(f"### {display_sentence}")
+
+    # キャンバス
     canvas_result = st_canvas(
         fill_color="rgba(255, 165, 0, 0.3)",
-        stroke_width=6,
+        stroke_width=stroke_width,
         stroke_color="#000000",
         background_color="#ffffff",
         height=250,
         width=600,
         drawing_mode="freedraw",
-        key=f"canvas_{st.session_state.canvas_key}",
+        key=f"canvas_{st.session_state.q_index}",
     )
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
 
     with col1:
         if st.button("採点する", use_container_width=True):
             if canvas_result.image_data is not None:
-                with st.spinner('AIが画像を解析中...'):
-                    # 画像の前処理を実行 (エッジ強調・適応二値化)
-                    processed_img = preprocess_image(canvas_result.image_data)
+                # 1. 画像の取得とグレースケール化
+                img_rgba = canvas_result.image_data.astype('uint8')
+                # 透明度がある場合は白背景と合成
+                img_pil = Image.fromarray(img_rgba)
+                bg = Image.new("RGB", img_pil.size, (255, 255, 255))
+                bg.paste(img_pil, mask=img_pil.split()[3])
+                
+                # 2. OpenCV形式に変換して画像処理
+                open_cv_image = np.array(bg)
+                gray = cv2.cvtColor(open_cv_image, cv2.COLOR_RGB2GRAY)
+                
+                # 二値化処理 (文字をはっきりさせる)
+                _, binary = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY_INV)
+                
+                # 文字の線を少し太くする（膨張処理）
+                kernel = np.ones((2,2), np.uint8)
+                dilated = cv2.dilate(binary, kernel, iterations=1)
+                
+                # 再度白背景に黒文字に戻す
+                processed_img = cv2.bitwise_not(dilated)
+                
+                with st.spinner('AIが形状を分析中...'):
+                    # 3. OCR認識
+                    # allowlistで数字（0, 9など）を排除
+                    results = reader.readtext(
+                        processed_img, 
+                        detail=0, 
+                        allowlist='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ',
+                        mag_ratio=2.0 # 拡大認識
+                    )
+                    recognized_text = "".join(results).replace(" ", "").lower()
                     
-                    # OCR実行
-                    results = reader.readtext(processed_img)
-                    raw_recognized = "".join([res[1] for res in results])
+                    correct_word = str(current_question['word']).strip().lower()
                     
-                    # 判定用の正規化
-                    norm_recognized = normalize_text(raw_recognized)
-                    norm_correct = normalize_text(str(current_q['answer']))
+                    # 4. 判定ロジック
+                    similarity = difflib.SequenceMatcher(None, recognized_text, correct_word).ratio()
                     
-                    if norm_recognized == norm_correct:
-                        st.session_state.answer_status = ("success", f"正解です！\n(認識: {raw_recognized})")
+                    if recognized_text == correct_word:
+                        st.session_state.answer_status = ("success", f"完璧です！ 正解: {correct_word}")
+                    elif similarity >= 0.75: # 予測精度のしきい値を少し下げて柔軟に
+                        st.session_state.answer_status = ("success", f"正解！ (認識結果: {recognized_text} → 推測判定: {correct_word})")
                     else:
-                        st.session_state.answer_status = ("error", f"不正解...\n認識結果: {raw_recognized}\n正解: {current_q['answer']}")
-                st.rerun()
+                        st.session_state.answer_status = ("error", f"認識結果: {recognized_text} / 正解: {correct_word}")
+            else:
+                st.warning("何か書いてください。")
 
     with col2:
-        if st.button("書き直す", use_container_width=True):
-            st.session_state.canvas_key += 1
+        if st.button("次の問題へ ➡️", use_container_width=True):
+            if len(df) > 1:
+                new_idx = st.session_state.q_index
+                while new_idx == st.session_state.q_index:
+                    new_idx = random.randint(0, len(df)-1)
+                st.session_state.q_index = new_idx
             st.session_state.answer_status = None
-            st.rerun()
-
-    with col3:
-        if st.button("次の問題へ ➔", use_container_width=True):
-            st.session_state.q_index = random.randint(0, len(df) - 1)
-            st.session_state.answer_status = None
-            st.session_state.canvas_key += 1
             st.rerun()
 
     if st.session_state.answer_status:
@@ -169,8 +130,11 @@ def main():
         if status == "success":
             st.success(msg)
             st.balloons()
+            st.markdown(f"✅ **{raw_sentence.replace('[ ]', f'**{current_question['word']}**')}**")
         else:
             st.error(msg)
-
-if __name__ == "__main__":
-    main()
+            st.caption("【ヒント】dは縦棒を長く、aは丸を閉じて書くとAIが認識しやすくなります。")
+            if st.checkbox("認識された画像を表示（デバッグ用）"):
+                st.image(processed_img, caption="AIに渡されている画像の状態")
+else:
+    st.warning("問題データがありません。")
