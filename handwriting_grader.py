@@ -22,7 +22,7 @@ reader = load_ocr_reader()
 def load_data():
     try:
         # アップロードされたCSVを読み込み
-        df = pd.read_csv("rekishi_questions.xlsx - Sheet1.csv", header=None, names=["question", "answer"])
+        df = pd.read_csv("rekishi_questions.xlsx - Sheet1.csv", header=None, names=["question", "answer"],encoding="cp932")
         return df
     except Exception as e:
         st.error(f"問題データの読み込みに失敗しました: {e}")
