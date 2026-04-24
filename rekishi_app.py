@@ -8,6 +8,7 @@ import random
 import os
 import unicodedata
 import cv2
+import time
 
 # --- 判定ロジックの強化 ---
 def normalize_text(text):
@@ -103,18 +104,22 @@ def main():
 
     st.write("▼ 下の枠に解答を書いてください")
     
-    # キャンバス要素を安定させるため、keyにユニークな値を持たせる
-    canvas_result = st_canvas(
-        fill_color="rgba(255, 165, 0, 0.3)",
-        stroke_width=6,
-        stroke_color="#000000",
-        background_color="#ffffff",
-        height=250,
-        width=600,
-        drawing_mode="freedraw",
-        key=f"rekishi_canvas_{st.session_state.rek_canvas_key}",
-        update_streamlit=True,
-    )
+    # 【エラー対策】キャンバスを格納する独立した器
+    canvas_placeholder = st.empty()
+    
+    with canvas_placeholder.container():
+        # キャンバス要素を安定させるため、keyにユニークな値を持たせる
+        canvas_result = st_canvas(
+            fill_color="rgba(255, 165, 0, 0.3)",
+            stroke_width=6,
+            stroke_color="#000000",
+            background_color="#ffffff",
+            height=250,
+            width=600,
+            drawing_mode="freedraw",
+            key=f"rekishi_canvas_{st.session_state.rek_canvas_key}",
+            update_streamlit=True,
+        )
 
     col1, col2, col3 = st.columns(3)
 
@@ -137,17 +142,21 @@ def main():
 
     with col2:
         if st.button("書き直す", use_container_width=True):
-            # keyをインクリメントすることで、以前のCanvas要素を強制的に破棄し、新しい要素として描画させる
+            # 画面を更新する前に一度キャンバスを明示的にクリアする
+            canvas_placeholder.empty()
             st.session_state.rek_canvas_key += 1
             st.session_state.rek_status = None
+            time.sleep(0.1) # ブラウザ側のクリーンアップ時間を確保
             st.rerun()
 
     with col3:
         if st.button("次の問題へ ➔", use_container_width=True):
+            # 画面を更新する前に一度キャンバスを明示的にクリアする
+            canvas_placeholder.empty()
             st.session_state.rek_q_index = random.randint(0, len(df) - 1)
             st.session_state.rek_status = None
-            # 問題遷移時もCanvasをリセット
             st.session_state.rek_canvas_key += 1
+            time.sleep(0.1) # ブラウザ側のクリーンアップ時間を確保
             st.rerun()
 
     if st.session_state.rek_status:
