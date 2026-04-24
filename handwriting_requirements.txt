@@ -1,5 +1,2 @@
-streamlit
-streamlit-drawable-canvas
-pandas
-google-generativeai
-pillow
+tesseract-ocr
+tesseract-ocr-jpn
