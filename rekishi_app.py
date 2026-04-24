@@ -8,6 +8,7 @@ import random
 import os
 import unicodedata
 import cv2
+import time
 
 # --- 判定ロジックの強化 ---
 def normalize_text(text):
@@ -35,25 +36,33 @@ def normalize_text(text):
 # --- OCRモデルの読み込み ---
 @st.cache_resource
 def load_ocr():
+    # サーバー負荷を抑えるためGPUをオフに設定
     return easyocr.Reader(['ja', 'en'], gpu=False)
 
-# --- 画像の前処理 ---
+# --- 画像の前処理 (エッジ強調) ---
 def preprocess_image(image_data):
     img = Image.fromarray(image_data.astype('uint8'), 'RGBA').convert('RGB')
     img_np = np.array(img)
     gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+    
+    # ノイズ除去
     gray = cv2.medianBlur(gray, 3)
+    
+    # エッジ強調 (アンシャープマスキング)
     gaussian_3 = cv2.GaussianBlur(gray, (0, 0), 2.0)
     unsharp_image = cv2.addWeighted(gray, 2.0, gaussian_3, -1.0, 0)
+    
+    # 適応的二値化
     binary = cv2.adaptiveThreshold(
         unsharp_image, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
         cv2.THRESH_BINARY, 11, 2
     )
+    
     kernel = np.ones((2,2), np.uint8)
     processed_img = cv2.erode(binary, kernel, iterations=1) 
     return processed_img
 
-# --- Data Loading (歴史専用ファイル名に変更) ---
+# --- Data Loading ---
 @st.cache_data
 def load_data(file_path):
     if not os.path.exists(file_path):
@@ -71,11 +80,12 @@ def main():
     st.set_page_config(page_title="歴史クイズ・手書き学習", layout="centered")
 
     st.title("📜 歴史クイズ・手書き学習アプリ")
-    st.caption("歴史専用の学習用アプリです。")
-
-    reader = load_ocr()
     
-    # --- 重要：歴史専用のExcelファイル名 ---
+    # OCRの準備
+    with st.spinner('AIモデルを準備中...'):
+        reader = load_ocr()
+    
+    # 歴史専用のExcelファイル名
     file_name = "rekishi_questions.xlsx"
     df = load_data(file_name)
 
@@ -83,14 +93,15 @@ def main():
         st.warning(f"'{file_name}' が見つかりません。GitHubにこの名前でExcelをアップロードしてください。")
         return
 
-    if 'rekishi_q_index' not in st.session_state:
-        st.session_state.rekishi_q_index = random.randint(0, len(df) - 1)
-    if 'rekishi_answer_status' not in st.session_state:
-        st.session_state.rekishi_answer_status = None
-    if 'rekishi_canvas_key' not in st.session_state:
-        st.session_state.rekishi_canvas_key = 0
+    # 混線を防ぐため、歴史専用のセッションキーを使用
+    if 'rek_idx' not in st.session_state:
+        st.session_state.rek_idx = random.randint(0, len(df) - 1)
+    if 'rek_status' not in st.session_state:
+        st.session_state.rek_status = None
+    if 'rek_canvas_key' not in st.session_state:
+        st.session_state.rek_canvas_key = 0
 
-    current_q = df.iloc[st.session_state.rekishi_q_index]
+    current_q = df.iloc[st.session_state.rek_idx]
 
     st.markdown("---")
     st.subheader("【歴史の問題】")
@@ -98,16 +109,19 @@ def main():
 
     st.write("▼ 下の枠に解答を書いてください")
     
-    canvas_result = st_canvas(
-        fill_color="rgba(255, 165, 0, 0.3)",
-        stroke_width=6,
-        stroke_color="#000000",
-        background_color="#ffffff",
-        height=250,
-        width=600,
-        drawing_mode="freedraw",
-        key=f"rekishi_canvas_{st.session_state.rekishi_canvas_key}",
-    )
+    # Canvasコンテナ
+    canvas_container = st.container()
+    with canvas_container:
+        canvas_result = st_canvas(
+            fill_color="rgba(255, 165, 0, 0.3)",
+            stroke_width=6,
+            stroke_color="#000000",
+            background_color="#ffffff",
+            height=250,
+            width=600,
+            drawing_mode="freedraw",
+            key=f"rek_canvas_{st.session_state.rek_canvas_key}",
+        )
 
     col1, col2, col3 = st.columns(3)
 
@@ -118,30 +132,33 @@ def main():
                     processed_img = preprocess_image(canvas_result.image_data)
                     results = reader.readtext(processed_img)
                     raw_recognized = "".join([res[1] for res in results])
+                    
                     norm_recognized = normalize_text(raw_recognized)
                     norm_correct = normalize_text(str(current_q['answer']))
                     
                     if norm_recognized == norm_correct:
-                        st.session_state.rekishi_answer_status = ("success", f"正解！\n(認識: {raw_recognized})")
+                        st.session_state.rek_status = ("success", f"正解！\n(認識: {raw_recognized})")
                     else:
-                        st.session_state.rekishi_answer_status = ("error", f"不正解...\n認識結果: {raw_recognized}\n正解: {current_q['answer']}")
+                        st.session_state.rek_status = ("error", f"不正解...\n認識結果: {raw_recognized}\n正解: {current_q['answer']}")
                 st.rerun()
 
     with col2:
         if st.button("書き直す", use_container_width=True):
-            st.session_state.rekishi_canvas_key += 1
-            st.session_state.rekishi_answer_status = None
+            st.session_state.rek_canvas_key += 1
+            st.session_state.rek_status = None
             st.rerun()
 
     with col3:
         if st.button("次の問題へ ➔", use_container_width=True):
-            st.session_state.rekishi_q_index = random.randint(0, len(df) - 1)
-            st.session_state.rekishi_answer_status = None
-            st.session_state.rekishi_canvas_key += 1
+            # 描画エラー回避のため、一度セッションをクリアしてから再読み込み
+            st.session_state.rek_idx = random.randint(0, len(df) - 1)
+            st.session_state.rek_status = None
+            st.session_state.rek_canvas_key += 1
             st.rerun()
 
-    if st.session_state.rekishi_answer_status:
-        status, msg = st.session_state.rekishi_answer_status
+    # 採点結果の表示
+    if st.session_state.rek_status:
+        status, msg = st.session_state.rek_status
         if status == "success":
             st.success(msg)
             st.balloons()
