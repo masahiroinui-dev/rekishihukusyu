@@ -109,9 +109,10 @@ def main():
 
     st.write("▼ 下の枠に解答を書いてください")
     
-    # Canvasコンテナ
-    canvas_container = st.container()
-    with canvas_container:
+    # キャンバスを格納する空のプレースホルダー
+    canvas_placeholder = st.empty()
+    
+    with canvas_placeholder.container():
         canvas_result = st_canvas(
             fill_color="rgba(255, 165, 0, 0.3)",
             stroke_width=6,
@@ -144,16 +145,21 @@ def main():
 
     with col2:
         if st.button("書き直す", use_container_width=True):
+            # プレースホルダーを空にしてからセッション更新
+            canvas_placeholder.empty()
             st.session_state.rek_canvas_key += 1
             st.session_state.rek_status = None
+            time.sleep(0.1) # 描画衝突回避のための微小待機
             st.rerun()
 
     with col3:
         if st.button("次の問題へ ➔", use_container_width=True):
-            # 描画エラー回避のため、一度セッションをクリアしてから再読み込み
+            # 描画エラー回避のため、一度コンテナをクリア
+            canvas_placeholder.empty()
             st.session_state.rek_idx = random.randint(0, len(df) - 1)
             st.session_state.rek_status = None
             st.session_state.rek_canvas_key += 1
+            time.sleep(0.1) # 描画衝突回避のための微小待機
             st.rerun()
 
     # 採点結果の表示
