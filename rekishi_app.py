@@ -100,6 +100,14 @@ def main():
         st.session_state.rek_status = None
     if 'rek_canvas_key' not in st.session_state:
         st.session_state.rek_canvas_key = 0
+    if 'show_canvas' not in st.session_state:
+        st.session_state.show_canvas = True
+
+    # 描画エラー回避：キャンバスを一時的に非表示にするフラグ管理
+    if not st.session_state.show_canvas:
+        st.session_state.show_canvas = True
+        time.sleep(0.1)
+        st.rerun()
 
     current_q = df.iloc[st.session_state.rek_idx]
 
@@ -109,10 +117,9 @@ def main():
 
     st.write("▼ 下の枠に解答を書いてください")
     
-    # 【最重要】キャンバスを独立したコンテナ（プレースホルダー）で管理
-    canvas_holder = st.empty()
-    
-    with canvas_holder.container():
+    # キャンバスをフラグで制御
+    canvas_result = None
+    if st.session_state.show_canvas:
         canvas_result = st_canvas(
             fill_color="rgba(255, 165, 0, 0.3)",
             stroke_width=6,
@@ -129,7 +136,7 @@ def main():
 
     with col1:
         if st.button("採点する", use_container_width=True):
-            if canvas_result.image_data is not None:
+            if canvas_result is not None and canvas_result.image_data is not None:
                 with st.spinner('解析中...'):
                     processed_img = preprocess_image(canvas_result.image_data)
                     results = reader.readtext(processed_img)
@@ -146,21 +153,19 @@ def main():
 
     with col2:
         if st.button("書き直す", use_container_width=True):
-            # 画面更新前にキャンバスを明示的に空にする
-            canvas_holder.empty()
+            # 一時的にキャンバスを消して再描画
+            st.session_state.show_canvas = False
             st.session_state.rek_canvas_key += 1
             st.session_state.rek_status = None
-            time.sleep(0.1) # ブラウザのDOMクリーンアップ時間を確保
             st.rerun()
 
     with col3:
         if st.button("次の問題へ ➔", use_container_width=True):
-            # 画面更新前にキャンバスを明示的に空にする
-            canvas_holder.empty()
+            # 一時的にキャンバスを消して再描画
+            st.session_state.show_canvas = False
             st.session_state.rek_idx = random.randint(0, len(df) - 1)
             st.session_state.rek_status = None
             st.session_state.rek_canvas_key += 1
-            time.sleep(0.1) # ブラウザのDOMクリーンアップ時間を確保
             st.rerun()
 
     # 採点結果の表示
