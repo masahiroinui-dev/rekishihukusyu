@@ -36,7 +36,6 @@ def normalize_text(text):
 # --- OCRモデルの読み込み ---
 @st.cache_resource
 def load_ocr():
-    # 英語アプリと同じ設定
     return easyocr.Reader(['ja', 'en'], gpu=False)
 
 # --- 画像の前処理 ---
@@ -59,13 +58,12 @@ def preprocess_image(image_data):
     processed_img = cv2.erode(binary, kernel, iterations=1) 
     return processed_img
 
-# --- Data Loading (歴史専用ファイル名) ---
+# --- Data Loading ---
 @st.cache_data
 def load_data(file_path):
     if not os.path.exists(file_path):
         return None
     try:
-        # 歴史専用のExcelファイルを読み込み
         df = pd.read_excel(file_path, header=None, names=['question', 'answer'])
         df = df.dropna(subset=['question'])
         return df
@@ -80,7 +78,6 @@ def main():
     
     reader = load_ocr()
     
-    # --- 歴史専用のExcelファイル名に変更 ---
     file_name = "rekishi_questions.xlsx"
     df = load_data(file_name)
 
@@ -88,13 +85,20 @@ def main():
         st.warning(f"'{file_name}' が見つかりません。")
         return
 
-    # --- セッションキーを歴史専用に統一 ---
+    # セッション管理
     if 'rek_q_index' not in st.session_state:
         st.session_state.rek_q_index = random.randint(0, len(df) - 1)
     if 'rek_status' not in st.session_state:
         st.session_state.rek_status = None
     if 'rek_canvas_key' not in st.session_state:
         st.session_state.rek_canvas_key = 0
+    if 'needs_reset' not in st.session_state:
+        st.session_state.needs_reset = False
+
+    # 重要：リセットフラグが立っている場合、一度コンポーネントを表示せずにパスする
+    if st.session_state.needs_reset:
+        st.session_state.needs_reset = False
+        st.rerun()
 
     current_q = df.iloc[st.session_state.rek_q_index]
 
@@ -104,22 +108,18 @@ def main():
 
     st.write("▼ 下の枠に解答を書いてください")
     
-    # 【エラー対策】キャンバスを格納する独立した器
-    canvas_placeholder = st.empty()
-    
-    with canvas_placeholder.container():
-        # キャンバス要素を安定させるため、keyにユニークな値を持たせる
-        canvas_result = st_canvas(
-            fill_color="rgba(255, 165, 0, 0.3)",
-            stroke_width=6,
-            stroke_color="#000000",
-            background_color="#ffffff",
-            height=250,
-            width=600,
-            drawing_mode="freedraw",
-            key=f"rekishi_canvas_{st.session_state.rek_canvas_key}",
-            update_streamlit=True,
-        )
+    # キャンバス描画部
+    canvas_result = st_canvas(
+        fill_color="rgba(255, 165, 0, 0.3)",
+        stroke_width=6,
+        stroke_color="#000000",
+        background_color="#ffffff",
+        height=250,
+        width=600,
+        drawing_mode="freedraw",
+        key=f"rekishi_canvas_v_{st.session_state.rek_canvas_key}",
+        update_streamlit=True,
+    )
 
     col1, col2, col3 = st.columns(3)
 
@@ -142,21 +142,20 @@ def main():
 
     with col2:
         if st.button("書き直す", use_container_width=True):
-            # 画面を更新する前に一度キャンバスを明示的にクリアする
-            canvas_placeholder.empty()
+            # 直接 rerun せず、キーを更新して「リセットが必要」とマークする
             st.session_state.rek_canvas_key += 1
             st.session_state.rek_status = None
-            time.sleep(0.1) # ブラウザ側のクリーンアップ時間を確保
+            st.session_state.needs_reset = True
+            time.sleep(0.1) # UIが反応する時間を確保
             st.rerun()
 
     with col3:
         if st.button("次の問題へ ➔", use_container_width=True):
-            # 画面を更新する前に一度キャンバスを明示的にクリアする
-            canvas_placeholder.empty()
             st.session_state.rek_q_index = random.randint(0, len(df) - 1)
             st.session_state.rek_status = None
             st.session_state.rek_canvas_key += 1
-            time.sleep(0.1) # ブラウザ側のクリーンアップ時間を確保
+            st.session_state.needs_reset = True
+            time.sleep(0.1)
             st.rerun()
 
     if st.session_state.rek_status:
