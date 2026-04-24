@@ -103,7 +103,7 @@ def main():
 
     st.write("▼ 下の枠に解答を書いてください")
     
-    # 英語アプリと同様のキャンバス配置
+    # キャンバス要素を安定させるため、keyにユニークな値を持たせる
     canvas_result = st_canvas(
         fill_color="rgba(255, 165, 0, 0.3)",
         stroke_width=6,
@@ -112,7 +112,8 @@ def main():
         height=250,
         width=600,
         drawing_mode="freedraw",
-        key=f"rek_canvas_{st.session_state.rek_canvas_key}",
+        key=f"rekishi_canvas_{st.session_state.rek_canvas_key}",
+        update_streamlit=True,
     )
 
     col1, col2, col3 = st.columns(3)
@@ -136,6 +137,7 @@ def main():
 
     with col2:
         if st.button("書き直す", use_container_width=True):
+            # keyをインクリメントすることで、以前のCanvas要素を強制的に破棄し、新しい要素として描画させる
             st.session_state.rek_canvas_key += 1
             st.session_state.rek_status = None
             st.rerun()
@@ -144,6 +146,7 @@ def main():
         if st.button("次の問題へ ➔", use_container_width=True):
             st.session_state.rek_q_index = random.randint(0, len(df) - 1)
             st.session_state.rek_status = None
+            # 問題遷移時もCanvasをリセット
             st.session_state.rek_canvas_key += 1
             st.rerun()
 
