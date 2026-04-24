@@ -1,2 +1,7 @@
-tesseract-ocr
-tesseract-ocr-jpn
+streamlit
+streamlit-drawable-canvas
+pandas
+pillow
+easyocr
+numpy
+opencv-python-headless

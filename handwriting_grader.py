@@ -2,12 +2,20 @@ import streamlit as st
 from streamlit_drawable_canvas import st_canvas
 import pandas as pd
 from PIL import Image
-import pytesseract
+import easyocr
 import random
 import numpy as np
 
 # --- 設定 ---
 st.set_page_config(page_title="歴史・手書き自動採点アプリ", layout="centered")
+
+# OCRリーダーの初期化 (日本語と英語を指定)
+@st.cache_resource
+def load_ocr_reader():
+    # Streamlit CloudなどのCPU環境でも動作するように gpu=False を設定
+    return easyocr.Reader(['ja', 'en'], gpu=False)
+
+reader = load_ocr_reader()
 
 # --- データ読み込み ---
 @st.cache_data
@@ -34,7 +42,7 @@ if "canvas_key_id" not in st.session_state:
 
 # --- メインコンテンツ ---
 st.title("📝 歴史 手書き自動採点")
-st.write("APIキー不要・オフラインライブラリによる文字認識")
+st.write("EasyOCRを使用したオフライン文字認識 (APIキー不要)")
 
 if not df.empty:
     question = df.iloc[st.session_state.current_q_idx]["question"]
@@ -46,7 +54,7 @@ if not df.empty:
     col_ctrl, col_canvas = st.columns([1, 3])
     
     with col_ctrl:
-        stroke_width = st.slider("ペンの太さ", 1, 10, 5)
+        stroke_width = st.slider("ペンの太さ", 1, 15, 7)
         if st.button("🔄 次の問題へ"):
             st.session_state.current_q_idx = random.randint(0, len(df) - 1)
             st.session_state.result = None
@@ -69,16 +77,19 @@ if not df.empty:
 
     if st.button("✅ 採点する", use_container_width=True):
         if canvas_result.image_data is not None:
-            with st.spinner("ローカルライブラリで判定中..."):
-                # 画像処理
+            with st.spinner("EasyOCRで判定中..."):
+                # 画像の整形
                 img_data = canvas_result.image_data.astype('uint8')
-                img = Image.fromarray(img_data).convert('L') # グレースケール変換
+                # EasyOCRはnumpy配列(RGB)をそのまま受け取れます
+                # 背景が透過(RGBA)の場合はRGBに変換
+                img_rgb = Image.fromarray(img_data).convert('RGB')
+                img_np = np.array(img_rgb)
                 
-                # OCR実行 (日本語と英語をターゲットに設定)
                 try:
-                    # configは1文字、または単語として認識する設定
-                    recognized = pytesseract.image_to_string(img, lang='jpn', config='--psm 7')
-                    recognized = recognized.strip().replace(" ", "").replace("　", "").replace("\n", "")
+                    # OCR実行
+                    results = reader.readtext(img_np, detail=0)
+                    # 認識された文字列を結合してクリーニング
+                    recognized = "".join(results).strip().replace(" ", "").replace("　", "").replace("\n", "")
                     st.session_state.recognized_text = recognized
                     
                     # 採点
@@ -87,7 +98,7 @@ if not df.empty:
                     else:
                         st.session_state.result = "不正解"
                 except Exception as e:
-                    st.error("OCRエンジンが見つかりません。packages.txtの設定を確認してください。")
+                    st.error(f"OCR実行エラー: {e}")
 
     # 結果表示
     if st.session_state.result:
@@ -99,6 +110,6 @@ if not df.empty:
             st.error(f"😭 **不正解...** (認識: {st.session_state.recognized_text})")
             st.info(f"正解は **{correct_answer}** です。")
 else:
-    st.error("問題データが空です。")
+    st.error("問題データが読み込めませんでした。")
 
-st.caption("Powered by Streamlit & Tesseract OCR")
+st.caption("Powered by Streamlit & EasyOCR")
