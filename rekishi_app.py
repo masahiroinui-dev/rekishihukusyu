@@ -92,14 +92,13 @@ def main():
         st.session_state.rek_status = None
     if 'rek_canvas_key' not in st.session_state:
         st.session_state.rek_canvas_key = 0
-    # Canvasを表示するかどうかのフラグ
     if 'show_canvas' not in st.session_state:
         st.session_state.show_canvas = True
 
-    # 画面リセット用の仕組み：一度キャンバスを隠してから rerun することで DOM 衝突を防ぐ
+    # キャンバス再描画のためのリセット処理
     if not st.session_state.show_canvas:
         st.session_state.show_canvas = True
-        time.sleep(0.05) # ブラウザのクリーンアップ時間をわずかに確保
+        time.sleep(0.1)
         st.rerun()
 
     current_q = df.iloc[st.session_state.rek_q_index]
@@ -110,20 +109,23 @@ def main():
 
     st.write("▼ 下の枠に解答を書いてください")
     
-    # キャンバス描画部（フラグがTrueの時だけ描画）
+    # キャンバス専用の器を定義
+    canvas_container = st.empty()
+    
     canvas_result = None
     if st.session_state.show_canvas:
-        canvas_result = st_canvas(
-            fill_color="rgba(255, 165, 0, 0.3)",
-            stroke_width=6,
-            stroke_color="#000000",
-            background_color="#ffffff",
-            height=250,
-            width=600,
-            drawing_mode="freedraw",
-            key=f"rekishi_canvas_v_{st.session_state.rek_canvas_key}",
-            update_streamlit=True,
-        )
+        with canvas_container.container():
+            canvas_result = st_canvas(
+                fill_color="rgba(255, 165, 0, 0.3)",
+                stroke_width=6,
+                stroke_color="#000000",
+                background_color="#ffffff",
+                height=250,
+                width=600,
+                drawing_mode="freedraw",
+                key=f"rekishi_canvas_v_{st.session_state.rek_canvas_key}",
+                update_streamlit=True,
+            )
 
     col1, col2, col3 = st.columns(3)
 
@@ -146,7 +148,8 @@ def main():
 
     with col2:
         if st.button("書き直す", use_container_width=True):
-            # 一旦キャンバスを非表示にしてリセットをかける
+            # 器を空にし、フラグを倒してDOM衝突を回避
+            canvas_container.empty()
             st.session_state.show_canvas = False
             st.session_state.rek_canvas_key += 1
             st.session_state.rek_status = None
@@ -154,7 +157,8 @@ def main():
 
     with col3:
         if st.button("次の問題へ ➔", use_container_width=True):
-            # 一旦キャンバスを非表示にしてリセットをかける
+            # 器を空にし、フラグを倒してDOM衝突を回避
+            canvas_container.empty()
             st.session_state.show_canvas = False
             st.session_state.rek_q_index = random.randint(0, len(df) - 1)
             st.session_state.rek_status = None
