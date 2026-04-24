@@ -92,12 +92,14 @@ def main():
         st.session_state.rek_status = None
     if 'rek_canvas_key' not in st.session_state:
         st.session_state.rek_canvas_key = 0
-    if 'needs_reset' not in st.session_state:
-        st.session_state.needs_reset = False
+    # Canvasを表示するかどうかのフラグ
+    if 'show_canvas' not in st.session_state:
+        st.session_state.show_canvas = True
 
-    # 重要：リセットフラグが立っている場合、一度コンポーネントを表示せずにパスする
-    if st.session_state.needs_reset:
-        st.session_state.needs_reset = False
+    # 画面リセット用の仕組み：一度キャンバスを隠してから rerun することで DOM 衝突を防ぐ
+    if not st.session_state.show_canvas:
+        st.session_state.show_canvas = True
+        time.sleep(0.05) # ブラウザのクリーンアップ時間をわずかに確保
         st.rerun()
 
     current_q = df.iloc[st.session_state.rek_q_index]
@@ -108,24 +110,26 @@ def main():
 
     st.write("▼ 下の枠に解答を書いてください")
     
-    # キャンバス描画部
-    canvas_result = st_canvas(
-        fill_color="rgba(255, 165, 0, 0.3)",
-        stroke_width=6,
-        stroke_color="#000000",
-        background_color="#ffffff",
-        height=250,
-        width=600,
-        drawing_mode="freedraw",
-        key=f"rekishi_canvas_v_{st.session_state.rek_canvas_key}",
-        update_streamlit=True,
-    )
+    # キャンバス描画部（フラグがTrueの時だけ描画）
+    canvas_result = None
+    if st.session_state.show_canvas:
+        canvas_result = st_canvas(
+            fill_color="rgba(255, 165, 0, 0.3)",
+            stroke_width=6,
+            stroke_color="#000000",
+            background_color="#ffffff",
+            height=250,
+            width=600,
+            drawing_mode="freedraw",
+            key=f"rekishi_canvas_v_{st.session_state.rek_canvas_key}",
+            update_streamlit=True,
+        )
 
     col1, col2, col3 = st.columns(3)
 
     with col1:
         if st.button("採点する", use_container_width=True):
-            if canvas_result.image_data is not None:
+            if canvas_result is not None and canvas_result.image_data is not None:
                 with st.spinner('解析中...'):
                     processed_img = preprocess_image(canvas_result.image_data)
                     results = reader.readtext(processed_img)
@@ -142,20 +146,19 @@ def main():
 
     with col2:
         if st.button("書き直す", use_container_width=True):
-            # 直接 rerun せず、キーを更新して「リセットが必要」とマークする
+            # 一旦キャンバスを非表示にしてリセットをかける
+            st.session_state.show_canvas = False
             st.session_state.rek_canvas_key += 1
             st.session_state.rek_status = None
-            st.session_state.needs_reset = True
-            time.sleep(0.1) # UIが反応する時間を確保
             st.rerun()
 
     with col3:
         if st.button("次の問題へ ➔", use_container_width=True):
+            # 一旦キャンバスを非表示にしてリセットをかける
+            st.session_state.show_canvas = False
             st.session_state.rek_q_index = random.randint(0, len(df) - 1)
             st.session_state.rek_status = None
             st.session_state.rek_canvas_key += 1
-            st.session_state.needs_reset = True
-            time.sleep(0.1)
             st.rerun()
 
     if st.session_state.rek_status:
