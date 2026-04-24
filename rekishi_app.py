@@ -100,6 +100,14 @@ def main():
         st.session_state.rek_status = None
     if 'rek_canvas_key' not in st.session_state:
         st.session_state.rek_canvas_key = 0
+    if 'reset_trigger' not in st.session_state:
+        st.session_state.reset_trigger = False
+
+    # リセットが必要な場合、一度画面を真っ白にしてからリロードする（removeChild対策）
+    if st.session_state.reset_trigger:
+        st.session_state.reset_trigger = False
+        time.sleep(0.2)
+        st.rerun()
 
     current_q = df.iloc[st.session_state.rek_idx]
 
@@ -109,10 +117,8 @@ def main():
 
     st.write("▼ 下の枠に解答を書いてください")
     
-    # キャンバスを格納する空のプレースホルダー
-    canvas_placeholder = st.empty()
-    
-    with canvas_placeholder.container():
+    # キャンバスを格納するコンテナ
+    with st.container():
         canvas_result = st_canvas(
             fill_color="rgba(255, 165, 0, 0.3)",
             stroke_width=6,
@@ -122,6 +128,7 @@ def main():
             width=600,
             drawing_mode="freedraw",
             key=f"rek_canvas_{st.session_state.rek_canvas_key}",
+            update_streamlit=True,
         )
 
     col1, col2, col3 = st.columns(3)
@@ -145,21 +152,17 @@ def main():
 
     with col2:
         if st.button("書き直す", use_container_width=True):
-            # プレースホルダーを空にしてからセッション更新
-            canvas_placeholder.empty()
             st.session_state.rek_canvas_key += 1
             st.session_state.rek_status = None
-            time.sleep(0.1) # 描画衝突回避のための微小待機
+            st.session_state.reset_trigger = True # リセットをトリガー
             st.rerun()
 
     with col3:
         if st.button("次の問題へ ➔", use_container_width=True):
-            # 描画エラー回避のため、一度コンテナをクリア
-            canvas_placeholder.empty()
             st.session_state.rek_idx = random.randint(0, len(df) - 1)
             st.session_state.rek_status = None
             st.session_state.rek_canvas_key += 1
-            time.sleep(0.1) # 描画衝突回避のための微小待機
+            st.session_state.reset_trigger = True # リセットをトリガー
             st.rerun()
 
     # 採点結果の表示
