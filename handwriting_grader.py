@@ -5,24 +5,40 @@ from PIL import Image
 import easyocr
 import random
 import numpy as np
+import jaconv  # 全角・半角変換用
+import re
 
 # --- 設定 ---
 st.set_page_config(page_title="歴史・手書き自動採点アプリ", layout="centered")
 
-# OCRリーダーの初期化 (日本語と英語を指定)
+# OCRリーダーの初期化
 @st.cache_resource
 def load_ocr_reader():
-    # Streamlit CloudなどのCPU環境でも動作するように gpu=False を設定
     return easyocr.Reader(['ja', 'en'], gpu=False)
 
 reader = load_ocr_reader()
+
+# --- テキスト正規化関数 ---
+def normalize_text(text):
+    if not isinstance(text, str):
+        text = str(text)
+    # 全角英数字を半角に、半角カタカナを全角に変換
+    text = jaconv.z2h(text, kana=False, ascii=True, digit=True) # 英数字を半角へ
+    text = jaconv.h2z(text, kana=True, ascii=False, digit=False) # カタカナを全角へ
+    
+    # のばし棒・ハイフンの統一 (色々な種類を「ー」に統一)
+    text = re.sub(r'[˗‐‑‒–—―⁃⁻−▬─━➖ーｰ-]', 'ー', text)
+    
+    # 空白、改行、記号の除去
+    text = re.sub(r'[\s\t\n\r　.,．，、。！!？?]', '', text)
+    
+    return text.lower().strip()
 
 # --- データ読み込み ---
 @st.cache_data
 def load_data():
     try:
-        # アップロードされたCSVを読み込み
-        df = pd.read_csv("rekishi_questions.xlsx - Sheet1.csv", header=None, names=["question", "answer"],encoding="cp932")
+        df = pd.read_csv("rekishi_questions.xlsx - Sheet1.csv", header=None, names=["question", "answer"])
         return df
     except Exception as e:
         st.error(f"問題データの読み込みに失敗しました: {e}")
@@ -42,15 +58,14 @@ if "canvas_key_id" not in st.session_state:
 
 # --- メインコンテンツ ---
 st.title("📝 歴史 手書き自動採点")
-st.write("EasyOCRを使用したオフライン文字認識 (APIキー不要)")
+st.write("表記ゆれ対応版 (全角・半角・のばし棒を自動補正)")
 
 if not df.empty:
     question = df.iloc[st.session_state.current_q_idx]["question"]
-    correct_answer = df.iloc[st.session_state.current_q_idx]["answer"]
+    raw_answer = str(df.iloc[st.session_state.current_q_idx]["answer"])
 
     st.markdown(f"### 問題: {question}")
 
-    # キャンバス操作用カラム
     col_ctrl, col_canvas = st.columns([1, 3])
     
     with col_ctrl:
@@ -77,28 +92,31 @@ if not df.empty:
 
     if st.button("✅ 採点する", use_container_width=True):
         if canvas_result.image_data is not None:
-            with st.spinner("EasyOCRで判定中..."):
-                # 画像の整形
+            with st.spinner("判定中..."):
                 img_data = canvas_result.image_data.astype('uint8')
-                # EasyOCRはnumpy配列(RGB)をそのまま受け取れます
-                # 背景が透過(RGBA)の場合はRGBに変換
                 img_rgb = Image.fromarray(img_data).convert('RGB')
                 img_np = np.array(img_rgb)
                 
                 try:
                     # OCR実行
-                    results = reader.readtext(img_np, detail=0)
-                    # 認識された文字列を結合してクリーニング
-                    recognized = "".join(results).strip().replace(" ", "").replace("　", "").replace("\n", "")
-                    st.session_state.recognized_text = recognized
+                    ocr_results = reader.readtext(img_np, detail=0)
+                    recognized_raw = "".join(ocr_results)
                     
-                    # 採点
-                    if recognized == str(correct_answer).strip():
+                    # 認識結果の正規化
+                    normalized_rec = normalize_text(recognized_raw)
+                    st.session_state.recognized_text = recognized_raw # 表示用には生データ
+                    
+                    # 正解データの分割と正規化 (スラッシュ区切りに対応)
+                    # 例: "アラー/アッラー" -> ["アラー", "アッラー"]
+                    possible_answers = [normalize_text(a) for a in raw_answer.split('/')]
+                    
+                    # 判定
+                    if normalized_rec in possible_answers:
                         st.session_state.result = "正解"
                     else:
                         st.session_state.result = "不正解"
                 except Exception as e:
-                    st.error(f"OCR実行エラー: {e}")
+                    st.error(f"エラー: {e}")
 
     # 結果表示
     if st.session_state.result:
@@ -108,8 +126,10 @@ if not df.empty:
             st.success(f"🎊 **正解です！** (認識: {st.session_state.recognized_text})")
         else:
             st.error(f"😭 **不正解...** (認識: {st.session_state.recognized_text})")
-            st.info(f"正解は **{correct_answer}** です。")
+            # 複数回答がある場合は見やすく表示
+            display_ans = raw_answer.replace('/', ' または ')
+            st.info(f"正解は **{display_ans}** です。")
 else:
-    st.error("問題データが読み込めませんでした。")
+    st.error("問題データが見つかりません。")
 
-st.caption("Powered by Streamlit & EasyOCR")
+st.caption("Powered by Streamlit & EasyOCR with jaconv")
