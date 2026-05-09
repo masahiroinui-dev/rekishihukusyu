@@ -31,6 +31,7 @@ st.markdown("""
     .stCanvasContainer {
         border: 2px solid #4a4a4a;
         border-radius: 8px;
+        background-color: #ffffff;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -132,7 +133,7 @@ def get_next_question():
 
 # --- メインコンテンツ ---
 st.title("📝 歴史 手書き自動採点")
-st.write("UIを調整し、ダークモードでの視認性を向上させました。")
+st.write("キャンバスサイズを拡大しました。大きな文字で記入してください。")
 
 if not df.empty:
     q_idx = st.session_state.question_pool[st.session_state.current_pool_idx]
@@ -141,22 +142,23 @@ if not df.empty:
 
     st.info(f"**問題:** {question}")
 
-    col_ctrl, col_canvas = st.columns([1, 3])
+    # レイアウトの調整
+    col_ctrl, col_canvas = st.columns([1, 4])
     
     with col_ctrl:
         stroke_width = st.slider("ペンの太さ", 1, 15, 6)
-        if st.button("🔄 次の問題へ"):
+        if st.button("🔄 次の問題"):
             get_next_question()
 
     with col_canvas:
-        # 手書きキャンバス
+        # 手書きキャンバス（サイズを拡大：Height 250 -> 350, Width 500 -> 700）
         canvas_result = st_canvas(
             fill_color="rgba(255, 165, 0, 0.3)",
             stroke_width=stroke_width,
             stroke_color="#000000",
             background_color="#ffffff",
-            height=250,
-            width=500,
+            height=350,
+            width=700,
             drawing_mode="freedraw",
             key=f"canvas_q_{st.session_state.canvas_key_id}",
             update_streamlit=True,
@@ -173,7 +175,7 @@ if not df.empty:
                 bbox = inverted_img.getbbox()
                 
                 if bbox:
-                    cropped_img = img.crop((max(0, bbox[0]-10), max(0, bbox[1]-10), min(img.width, bbox[2]+10), min(img.height, bbox[3]+10)))
+                    cropped_img = img.crop((max(0, bbox[0]-15), max(0, bbox[1]-15), min(img.width, bbox[2]+15), min(img.height, bbox[3]+15)))
                     img_np = np.array(cropped_img)
                 else:
                     img_np = np.array(img)
@@ -207,4 +209,4 @@ if not df.empty:
 else:
     st.error("問題データが読み込めていません。")
 
-st.caption("Powered by Streamlit & EasyOCR (Enhanced UI)")
+st.caption("Powered by Streamlit & EasyOCR")
