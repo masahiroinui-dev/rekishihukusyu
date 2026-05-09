@@ -17,10 +17,27 @@ except ModuleNotFoundError:
 # --- 設定 ---
 st.set_page_config(page_title="歴史・手書き自動採点アプリ", layout="centered")
 
+# ダークモードでもキャンバスのアイコン（消去、戻る等）を見やすくするためのCSS
+st.markdown("""
+    <style>
+    /* キャンバスのツールバーアイコンをダークモードでも白っぽく強調 */
+    [data-testid="stCanvas"] button {
+        background-color: #f0f2f6 !important;
+        color: #31333F !important;
+        border-radius: 4px;
+        margin: 2px;
+    }
+    /* キャンバス自体に外枠をつけて境界をわかりやすくする */
+    .stCanvasContainer {
+        border: 2px solid #4a4a4a;
+        border-radius: 8px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
 # OCRリーダーの初期化
 @st.cache_resource
 def load_ocr_reader():
-    # ja: 日本語, en: 英語
     return easyocr.Reader(['ja', 'en'], gpu=False)
 
 reader = load_ocr_reader()
@@ -31,16 +48,13 @@ def normalize_text(text):
         text = str(text)
     
     # OCRが「ナ」や漢字の「十」を「+」と誤認するケースの補正
-    # 歴史用語で記号の「+」を使うことはないため、文脈的に置換
     text = text.replace('+', 'ナ') 
     
     # 全角英数字を半角に、半角カタカナを全角に変換
-    text = jaconv.z2h(text, kana=False, ascii=True, digit=True) # 英数字を半角へ
-    text = jaconv.h2z(text, kana=True, ascii=False, digit=False) # カタカナを全角へ
+    text = jaconv.z2h(text, kana=False, ascii=True, digit=True)
+    text = jaconv.h2z(text, kana=True, ascii=False, digit=False)
     
     # のばし棒・ハイフン・漢字の「一」の正規化
-    # OCRが「ー」を「-」や「−」と誤認するケースを全て「ー」に統一
-    # 判定ロジック側で正解との比較時にさらに柔軟に扱います
     text = re.sub(r'[˗‐‑‒–—―⁃⁻−▬─━➖ーｰ-]', 'ー', text)
     
     # 空白、改行、記号の除去
@@ -50,26 +64,18 @@ def normalize_text(text):
 
 # --- 文脈判断付き比較関数 ---
 def judge_answer(recognized, possible_answers):
-    """
-    OCRの特性を考慮した判定
-    「ナ」と「十」、「ー」と「一」などの混同を正解データに基づいて許容する
-    """
     rec_norm = normalize_text(recognized)
     
     for ans in possible_answers:
         ans_norm = normalize_text(ans)
         
-        # 1. 完全一致
         if rec_norm == ans_norm:
             return True
             
-        # 2. 誤認しやすい文字の相互変換テスト
-        # 「ナ」←→「十」の入れ替えを試行
         variants = [rec_norm]
         if 'ナ' in rec_norm: variants.append(rec_norm.replace('ナ', '十'))
         if '十' in rec_norm: variants.append(rec_norm.replace('十', 'ナ'))
         
-        # 「ー」←→「一」の入れ替えを試行
         current_variants = list(variants)
         for v in current_variants:
             if 'ー' in v: variants.append(v.replace('ー', '一'))
@@ -126,7 +132,7 @@ def get_next_question():
 
 # --- メインコンテンツ ---
 st.title("📝 歴史 手書き自動採点")
-st.write("誤認しやすい文字（ナ/十、ー/一）の補正機能を強化しました。")
+st.write("UIを調整し、ダークモードでの視認性を向上させました。")
 
 if not df.empty:
     q_idx = st.session_state.question_pool[st.session_state.current_pool_idx]
@@ -143,6 +149,7 @@ if not df.empty:
             get_next_question()
 
     with col_canvas:
+        # 手書きキャンバス
         canvas_result = st_canvas(
             fill_color="rgba(255, 165, 0, 0.3)",
             stroke_width=stroke_width,
@@ -172,15 +179,12 @@ if not df.empty:
                     img_np = np.array(img)
                 
                 try:
-                    # OCR実行
                     ocr_results = reader.readtext(img_np, detail=0, paragraph=False, x_ths=1.0)
                     recognized_raw = "".join(ocr_results)
                     st.session_state.recognized_text = recognized_raw
                     
-                    # 正解のリスト化
                     possible_answers = [a.strip() for a in raw_answer.split('/')]
                     
-                    # 改良した判定ロジックで採点
                     if judge_answer(recognized_raw, possible_answers):
                         st.session_state.result = "正解"
                     else:
@@ -203,4 +207,4 @@ if not df.empty:
 else:
     st.error("問題データが読み込めていません。")
 
-st.caption("Powered by Streamlit & EasyOCR (Enhanced Context Recognition)")
+st.caption("Powered by Streamlit & EasyOCR (Enhanced UI)")
