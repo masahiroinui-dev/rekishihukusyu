@@ -2,11 +2,17 @@ import streamlit as st
 from streamlit_drawable_canvas import st_canvas
 import pandas as pd
 from PIL import Image
-import easyocr
 import random
 import numpy as np
-import jaconv  # 全角・半角変換用
 import re
+
+# ライブラリのインポートチェック
+try:
+    import easyocr
+    import jaconv
+except ModuleNotFoundError:
+    st.error("必要なライブラリ（easyocr または jaconv）が見つかりません。requirements.txt が正しく配置されているか確認してください。")
+    st.stop()
 
 # --- 設定 ---
 st.set_page_config(page_title="歴史・手書き自動採点アプリ", layout="centered")
@@ -14,6 +20,7 @@ st.set_page_config(page_title="歴史・手書き自動採点アプリ", layout=
 # OCRリーダーの初期化
 @st.cache_resource
 def load_ocr_reader():
+    # Streamlit CloudのCPU環境を想定
     return easyocr.Reader(['ja', 'en'], gpu=False)
 
 reader = load_ocr_reader()
@@ -34,15 +41,25 @@ def normalize_text(text):
     
     return text.lower().strip()
 
-# --- データ読み込み ---
+# --- データ読み込み（文字コードエラー対策版） ---
 @st.cache_data
 def load_data():
-    try:
-        df = pd.read_csv("rekishi_questions.xlsx - Sheet1.csv", header=None, names=["question", "answer"])
-        return df
-    except Exception as e:
-        st.error(f"問題データの読み込みに失敗しました: {e}")
-        return pd.DataFrame(columns=["question", "answer"])
+    csv_file = "rekishi_questions.xlsx - Sheet1.csv"
+    # 試行するエンコーディングのリスト
+    encodings = ['utf-8', 'shift_jis', 'cp932', 'euc-jp']
+    
+    for enc in encodings:
+        try:
+            df = pd.read_csv(csv_file, header=None, names=["question", "answer"], encoding=enc)
+            return df
+        except (UnicodeDecodeError, FileNotFoundError):
+            continue
+        except Exception as e:
+            st.error(f"予期せぬエラー: {e}")
+            break
+            
+    st.error(f"問題データ（{csv_file}）の読み込みに失敗しました。文字コードが対応していないか、ファイルが存在しません。")
+    return pd.DataFrame(columns=["question", "answer"])
 
 df = load_data()
 
@@ -61,6 +78,7 @@ st.title("📝 歴史 手書き自動採点")
 st.write("表記ゆれ対応版 (全角・半角・のばし棒を自動補正)")
 
 if not df.empty:
+    # データのクリーンアップ（NaN対策）
     question = df.iloc[st.session_state.current_q_idx]["question"]
     raw_answer = str(df.iloc[st.session_state.current_q_idx]["answer"])
 
@@ -78,6 +96,7 @@ if not df.empty:
             st.rerun()
 
     with col_canvas:
+        # 手書きキャンバス
         canvas_result = st_canvas(
             fill_color="rgba(255, 165, 0, 0.3)",
             stroke_width=stroke_width,
@@ -104,10 +123,9 @@ if not df.empty:
                     
                     # 認識結果の正規化
                     normalized_rec = normalize_text(recognized_raw)
-                    st.session_state.recognized_text = recognized_raw # 表示用には生データ
+                    st.session_state.recognized_text = recognized_raw # 表示用
                     
                     # 正解データの分割と正規化 (スラッシュ区切りに対応)
-                    # 例: "アラー/アッラー" -> ["アラー", "アッラー"]
                     possible_answers = [normalize_text(a) for a in raw_answer.split('/')]
                     
                     # 判定
@@ -126,10 +144,9 @@ if not df.empty:
             st.success(f"🎊 **正解です！** (認識: {st.session_state.recognized_text})")
         else:
             st.error(f"😭 **不正解...** (認識: {st.session_state.recognized_text})")
-            # 複数回答がある場合は見やすく表示
             display_ans = raw_answer.replace('/', ' または ')
             st.info(f"正解は **{display_ans}** です。")
 else:
-    st.error("問題データが見つかりません。")
+    st.error("問題データが読み込めていません。")
 
 st.caption("Powered by Streamlit & EasyOCR with jaconv")
