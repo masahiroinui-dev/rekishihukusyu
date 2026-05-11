@@ -17,7 +17,7 @@ except ModuleNotFoundError:
 # --- 設定 ---
 st.set_page_config(page_title="歴史・手書き自動採点アプリ", layout="centered")
 
-# レイアウト最適化のためのCSS
+# ダークモードでもキャンバスのアイコン（消去、戻る等）を見やすくするための強力なCSS
 st.markdown("""
     <style>
     /* タイトルの上の余白を消す */
@@ -25,19 +25,30 @@ st.markdown("""
         padding-top: 1rem !important;
         padding-bottom: 0rem !important;
     }
-    /* ツールバーアイコンの視認性向上 */
-    [data-testid="stCanvas"] button {
-        background-color: #f0f2f6 !important;
-        color: #31333F !important;
-        border-radius: 4px;
-        margin: 2px;
+    
+    /* キャンバスのツールバーボタンを強制的に視認性の高いスタイルに固定 */
+    /* st_canvas内部のボタン要素をターゲットにする */
+    div[data-testid="stCanvas"] button {
+        background-color: #FFFFFF !important;  /* 背景を常に白に */
+        color: #000000 !important;             /* アイコン色を常に黒に */
+        border: 1px solid #CCCCCC !important;
+        border-radius: 4px !important;
+        margin: 2px !important;
+        opacity: 1.0 !important;               /* 透明度を無効化 */
     }
+    
+    /* ホバー時の色（少しグレーに） */
+    div[data-testid="stCanvas"] button:hover {
+        background-color: #EEEEEE !important;
+    }
+
     /* キャンバスの外枠 */
     .stCanvasContainer {
         border: 2px solid #4a4a4a;
         border-radius: 8px;
         background-color: #ffffff;
     }
+    
     /* 問題文のフォントサイズ調整 */
     .stAlert {
         padding: 0.5rem !important;
@@ -153,13 +164,13 @@ if not df.empty:
         if st.button("🔄 次へ", use_container_width=True):
             get_next_question()
 
-    # キャンバスを横いっぱいに配置
+    # キャンバス
     canvas_result = st_canvas(
         fill_color="rgba(255, 165, 0, 0.3)",
         stroke_width=stroke_width,
         stroke_color="#000000",
         background_color="#ffffff",
-        height=280, # 350 -> 280 に縮小
+        height=280,
         width=700,
         drawing_mode="freedraw",
         key=f"canvas_q_{st.session_state.canvas_key_id}",
@@ -192,7 +203,7 @@ if not df.empty:
                 except Exception as e:
                     st.error(f"エラー: {e}")
 
-    # 結果表示（ポップアップ的な表示を避けるため、ボタンの下に固定）
+    # 結果表示
     if st.session_state.result:
         if st.session_state.result == "正解":
             st.balloons()
