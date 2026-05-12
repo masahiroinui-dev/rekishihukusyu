@@ -27,7 +27,6 @@ st.markdown("""
     }
     
     /* キャンバスのツールバーボタンを強制的に視認性の高いスタイルに固定 */
-    /* st_canvas内部のボタン要素をターゲットにする */
     div[data-testid="stCanvas"] button {
         background-color: #FFFFFF !important;  /* 背景を常に白に */
         color: #000000 !important;             /* アイコン色を常に黒に */
@@ -69,7 +68,7 @@ def normalize_text(text):
     if not isinstance(text, str):
         text = str(text)
     
-    # 1. 誤認補正
+    # 1. 誤認補正（歴史用語に頻出する文字への変換）
     text = text.replace('+', 'ナ') 
     confused_chars = {
         'g': '9', 'q': '9', 'G': '6', 'b': '6',
@@ -79,30 +78,54 @@ def normalize_text(text):
     for old, new in confused_chars.items():
         text = text.replace(old, new)
 
+    # 全角・半角の統一
     text = jaconv.z2h(text, kana=False, ascii=True, digit=True)
     text = jaconv.h2z(text, kana=True, ascii=False, digit=False)
+    
+    # のばし棒（ー）の正規化
     text = re.sub(r'[˗‐‑‒–—―⁃⁻−▬─━➖ーｰ-]', 'ー', text)
+    
+    # アルファベットの完全除去
     text = re.sub(r'[a-zA-Z]', '', text)
-    text = re.sub(r'[\s\t\n\r　.,．，、。！!？?]', '', text)
+    
+    # ひらがな・カタカナ・漢字・数字・のばし棒 以外をすべて除去
+    text = re.sub(r'[^0-9\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFFー]', '', text)
     
     return text.lower().strip()
 
 # --- 比較関数 ---
 def judge_answer(recognized, possible_answers):
     rec_norm = normalize_text(recognized)
+    
     for ans in possible_answers:
         ans_norm = normalize_text(ans)
+        
+        # 1. 基本的な一致確認
         if rec_norm == ans_norm:
             return True
+        
+        # 2. 誤認しやすいバリエーションの生成
         variants = [rec_norm]
+        
+        # にんべん系の誤認補正 (「偶」が「僧」や「伸」になるケース)
+        # 正解に「偶」が含まれる場合、認識結果の「僧」や「伸」を「偶」に置換してみる
+        if '偶' in ans_norm:
+            if '僧' in rec_norm: variants.append(rec_norm.replace('僧', '偶'))
+            if '伸' in rec_norm: variants.append(rec_norm.replace('伸', '偶'))
+        
+        # 「ナ」←→「十」の補完
         if 'ナ' in rec_norm: variants.append(rec_norm.replace('ナ', '十'))
         if '十' in rec_norm: variants.append(rec_norm.replace('十', 'ナ'))
+        
+        # 「ー」←→「一」の補完
         current_variants = list(variants)
         for v in current_variants:
             if 'ー' in v: variants.append(v.replace('ー', '一'))
             if '一' in v: variants.append(v.replace('一', 'ー'))
+            
         if any(v == ans_norm for v in variants):
             return True
+            
     return False
 
 # --- データ読み込み ---
@@ -194,7 +217,11 @@ if not df.empty:
                 try:
                     ocr_results = reader.readtext(img_np, detail=0, paragraph=False, x_ths=1.0)
                     recognized_raw = "".join(ocr_results)
-                    st.session_state.recognized_text = recognized_raw
+                    
+                    # 記号を除去した認識結果
+                    clean_text = normalize_text(recognized_raw)
+                    st.session_state.recognized_text = clean_text if clean_text else recognized_raw
+                    
                     possible_answers = [a.strip() for a in raw_answer.split('/')]
                     if judge_answer(recognized_raw, possible_answers):
                         st.session_state.result = "正解"
