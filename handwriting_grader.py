@@ -5,54 +5,32 @@ from PIL import Image, ImageOps
 import random
 import numpy as np
 import re
+import cv2  # OpenCVを追加
 
 # ライブラリのインポートチェック
 try:
     import easyocr
     import jaconv
 except ModuleNotFoundError:
-    st.error("必要なライブラリ（easyocr または jaconv）が見つかりません。requirements.txt が正しく配置されているか確認してください。")
+    st.error("必要なライブラリが見つかりません。")
     st.stop()
 
 # --- 設定 ---
 st.set_page_config(page_title="歴史・手書き自動採点アプリ", layout="centered")
 
-# ダークモードでもキャンバスのアイコン（消去、戻る等）を見やすくするための強力なCSS
+# CSS: UI調整（ダークモード対応）
 st.markdown("""
     <style>
-    /* タイトルの上の余白を消す */
-    .block-container {
-        padding-top: 1rem !important;
-        padding-bottom: 0rem !important;
-    }
-    
-    /* キャンバスのツールバーボタンを強制的に視認性の高いスタイルに固定 */
+    .block-container { padding-top: 1rem !important; padding-bottom: 0rem !important; }
     div[data-testid="stCanvas"] button {
-        background-color: #FFFFFF !important;  /* 背景を常に白に */
-        color: #000000 !important;             /* アイコン色を常に黒に */
+        background-color: #FFFFFF !important;
+        color: #000000 !important;
         border: 1px solid #CCCCCC !important;
         border-radius: 4px !important;
         margin: 2px !important;
-        opacity: 1.0 !important;               /* 透明度を無効化 */
     }
-    
-    /* ホバー時の色（少しグレーに） */
-    div[data-testid="stCanvas"] button:hover {
-        background-color: #EEEEEE !important;
-    }
-
-    /* キャンバスの外枠 */
-    .stCanvasContainer {
-        border: 2px solid #4a4a4a;
-        border-radius: 8px;
-        background-color: #ffffff;
-    }
-    
-    /* 問題文のフォントサイズ調整 */
-    .stAlert {
-        padding: 0.5rem !important;
-        margin-bottom: 0.5rem !important;
-    }
+    .stCanvasContainer { border: 2px solid #4a4a4a; border-radius: 8px; background-color: #ffffff; }
+    .stAlert { padding: 0.5rem !important; margin-bottom: 0.5rem !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -63,12 +41,29 @@ def load_ocr_reader():
 
 reader = load_ocr_reader()
 
+# --- 画像前処理 (OpenCV) ---
+def preprocess_image(img_np):
+    # 1. グレースケール化
+    gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+    
+    # 2. コントラスト強調 (CLAHE: Contrast Limited Adaptive Histogram Equalization)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+    enhanced = clahe.apply(gray)
+    
+    # 3. 適応的二値化 (背景が白、文字が黒の状態で処理)
+    # 影やムラに強く、文字の輪郭をはっきりさせる
+    thresh = cv2.adaptiveThreshold(
+        enhanced, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+        cv2.THRESH_BINARY, 11, 2
+    )
+    
+    # OCRは3チャンネル(RGB)を期待することが多いため戻す
+    final_img = cv2.cvtColor(thresh, cv2.COLOR_GRAY2RGB)
+    return final_img
+
 # --- テキスト正規化関数 ---
 def normalize_text(text):
-    if not isinstance(text, str):
-        text = str(text)
-    
-    # 1. 誤認補正（歴史用語に頻出する文字への変換）
+    if not isinstance(text, str): text = str(text)
     text = text.replace('+', 'ナ') 
     confused_chars = {
         'g': '9', 'q': '9', 'G': '6', 'b': '6',
@@ -78,97 +73,63 @@ def normalize_text(text):
     for old, new in confused_chars.items():
         text = text.replace(old, new)
 
-    # 全角・半角の統一
     text = jaconv.z2h(text, kana=False, ascii=True, digit=True)
     text = jaconv.h2z(text, kana=True, ascii=False, digit=False)
-    
-    # のばし棒（ー）の正規化
     text = re.sub(r'[˗‐‑‒–—―⁃⁻−▬─━➖ーｰ-]', 'ー', text)
-    
-    # アルファベットの完全除去
     text = re.sub(r'[a-zA-Z]', '', text)
-    
-    # ひらがな・カタカナ・漢字・数字・のばし棒 以外をすべて除去
     text = re.sub(r'[^0-9\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFFー]', '', text)
-    
     return text.lower().strip()
 
 # --- 比較関数 ---
 def judge_answer(recognized, possible_answers):
     rec_norm = normalize_text(recognized)
-    
     for ans in possible_answers:
         ans_norm = normalize_text(ans)
-        
-        # 1. 基本的な一致確認
-        if rec_norm == ans_norm:
-            return True
-        
-        # 2. 誤認しやすいバリエーションの生成
+        if rec_norm == ans_norm: return True
         variants = [rec_norm]
-        
-        # にんべん系の誤認補正 (「偶」が「僧」や「伸」になるケース)
-        # 正解に「偶」が含まれる場合、認識結果の「僧」や「伸」を「偶」に置換してみる
         if '偶' in ans_norm:
             if '僧' in rec_norm: variants.append(rec_norm.replace('僧', '偶'))
             if '伸' in rec_norm: variants.append(rec_norm.replace('伸', '偶'))
-        
-        # 「ナ」←→「十」の補完
         if 'ナ' in rec_norm: variants.append(rec_norm.replace('ナ', '十'))
         if '十' in rec_norm: variants.append(rec_norm.replace('十', 'ナ'))
-        
-        # 「ー」←→「一」の補完
         current_variants = list(variants)
         for v in current_variants:
             if 'ー' in v: variants.append(v.replace('ー', '一'))
             if '一' in v: variants.append(v.replace('一', 'ー'))
-            
-        if any(v == ans_norm for v in variants):
-            return True
-            
+        if any(v == ans_norm for v in variants): return True
     return False
 
 # --- データ読み込み ---
 @st.cache_data
 def load_data():
     csv_file = "rekishi_questions.xlsx - Sheet1.csv"
-    encodings = ['utf-8', 'shift_jis', 'cp932', 'euc-jp']
-    for enc in encodings:
-        try:
-            df = pd.read_csv(csv_file, header=None, names=["question", "answer"], encoding=enc)
-            return df
-        except:
-            continue
-    return pd.DataFrame(columns=["question", "answer"])
+    try:
+        df = pd.read_csv(csv_file, header=None, names=["question", "answer"], encoding='utf-8')
+        return df
+    except:
+        return pd.DataFrame(columns=["question", "answer"])
 
 df = load_data()
 
-# --- セッション状態 ---
+# --- セッション ---
 if "question_pool" not in st.session_state:
     indices = list(range(len(df)))
     random.shuffle(indices)
     st.session_state.question_pool = indices
-if "current_pool_idx" not in st.session_state:
-    st.session_state.current_pool_idx = 0
-if "result" not in st.session_state:
-    st.session_state.result = None
-if "recognized_text" not in st.session_state:
-    st.session_state.recognized_text = ""
-if "canvas_key_id" not in st.session_state:
-    st.session_state.canvas_key_id = 0
+if "current_pool_idx" not in st.session_state: st.session_state.current_pool_idx = 0
+if "result" not in st.session_state: st.session_state.result = None
+if "recognized_text" not in st.session_state: st.session_state.recognized_text = ""
+if "canvas_key_id" not in st.session_state: st.session_state.canvas_key_id = 0
 
 def get_next_question():
-    st.session_state.current_pool_idx += 1
-    if st.session_state.current_pool_idx >= len(st.session_state.question_pool):
-        random.shuffle(st.session_state.question_pool)
-        st.session_state.current_pool_idx = 0
+    st.session_state.current_pool_idx = (st.session_state.current_pool_idx + 1) % len(df)
     st.session_state.result = None
     st.session_state.recognized_text = ""
     st.session_state.canvas_key_id += 1
     st.rerun()
 
-# --- メインコンテンツ ---
-st.title("📝 歴史 手書き採点")
+# --- UI ---
+st.title("📝 歴史 手書き採点 (OpenCV強化版)")
 
 if not df.empty:
     q_idx = st.session_state.question_pool[st.session_state.current_pool_idx]
@@ -177,24 +138,17 @@ if not df.empty:
 
     st.info(f"**問題:** {question}")
 
-    # 上部に操作系をまとめる
     col_s1, col_s2, col_btn = st.columns([2, 2, 1])
-    with col_s1:
-        stroke_width = st.select_slider("ペンの太さ", options=range(1, 16), value=6)
-    with col_s2:
-        st.write("") # スペース調整
+    with col_s1: stroke_width = st.select_slider("ペンの太さ", options=range(1, 16), value=6)
     with col_btn:
-        if st.button("🔄 次へ", use_container_width=True):
-            get_next_question()
+        if st.button("🔄 次へ", use_container_width=True): get_next_question()
 
-    # キャンバス
     canvas_result = st_canvas(
         fill_color="rgba(255, 165, 0, 0.3)",
         stroke_width=stroke_width,
         stroke_color="#000000",
         background_color="#ffffff",
-        height=280,
-        width=700,
+        height=280, width=700,
         drawing_mode="freedraw",
         key=f"canvas_q_{st.session_state.canvas_key_id}",
         update_streamlit=True,
@@ -202,35 +156,40 @@ if not df.empty:
 
     if st.button("✅ 採点する", use_container_width=True, type="primary"):
         if canvas_result.image_data is not None:
-            with st.spinner("判定中..."):
+            with st.spinner("OpenCVで画像を最適化中..."):
                 img_data = canvas_result.image_data.astype('uint8')
-                img = Image.fromarray(img_data).convert('RGB')
-                gray_img = ImageOps.grayscale(img)
-                inverted_img = ImageOps.invert(gray_img)
-                bbox = inverted_img.getbbox()
-                if bbox:
-                    cropped_img = img.crop((max(0, bbox[0]-15), max(0, bbox[1]-15), min(img.width, bbox[2]+15), min(img.height, bbox[3]+15)))
-                    img_np = np.array(cropped_img)
-                else:
-                    img_np = np.array(img)
+                img_rgb = cv2.cvtColor(img_data, cv2.COLOR_RGBA2RGB)
                 
-                try:
-                    ocr_results = reader.readtext(img_np, detail=0, paragraph=False, x_ths=1.0)
-                    recognized_raw = "".join(ocr_results)
+                # 1. トリミング用のバウンディングボックス取得
+                gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
+                # 反転させて文字部分を白くし、座標を取得
+                inv = cv2.bitwise_not(gray)
+                coords = cv2.findNonZero(inv)
+                
+                if coords is not None:
+                    x, y, w, h = cv2.boundingRect(coords)
+                    pad = 15
+                    img_cropped = img_rgb[max(0, y-pad):min(img_rgb.shape[0], y+h+pad), 
+                                          max(0, x-pad):min(img_rgb.shape[1], x+w+pad)]
                     
-                    # 記号を除去した認識結果
-                    clean_text = normalize_text(recognized_raw)
-                    st.session_state.recognized_text = clean_text if clean_text else recognized_raw
+                    # 2. OpenCVによる前処理（コントラスト・二値化）
+                    processed_img = preprocess_image(img_cropped)
                     
-                    possible_answers = [a.strip() for a in raw_answer.split('/')]
-                    if judge_answer(recognized_raw, possible_answers):
-                        st.session_state.result = "正解"
-                    else:
-                        st.session_state.result = "不正解"
-                except Exception as e:
-                    st.error(f"エラー: {e}")
+                    # デバッグ用に前処理後の画像をサイドバーに表示（オプション）
+                    # st.sidebar.image(processed_img, caption="Processed Image")
+                    
+                    try:
+                        ocr_results = reader.readtext(processed_img, detail=0)
+                        recognized_raw = "".join(ocr_results)
+                        st.session_state.recognized_text = normalize_text(recognized_raw)
+                        
+                        possible_answers = [a.strip() for a in raw_answer.split('/')]
+                        st.session_state.result = "正解" if judge_answer(recognized_raw, possible_answers) else "不正解"
+                    except Exception as e:
+                        st.error(f"OCR Error: {e}")
+                else:
+                    st.warning("文字が記入されていません。")
 
-    # 結果表示
     if st.session_state.result:
         if st.session_state.result == "正解":
             st.balloons()
@@ -238,6 +197,5 @@ if not df.empty:
         else:
             st.error(f"😭 **不正解** (読み: {st.session_state.recognized_text})")
             st.info(f"正解: **{raw_answer.replace('/', ' / ')}**")
-        st.caption(f"進捗: {st.session_state.current_pool_idx + 1} / {len(df)}")
 else:
     st.error("問題データがありません。")
