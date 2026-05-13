@@ -5,7 +5,8 @@ from PIL import Image, ImageOps
 import random
 import numpy as np
 import re
-import cv2  # OpenCVを追加
+import cv2
+import os
 
 # ライブラリのインポートチェック
 try:
@@ -18,7 +19,7 @@ except ModuleNotFoundError:
 # --- 設定 ---
 st.set_page_config(page_title="歴史・手書き自動採点アプリ", layout="centered")
 
-# CSS: UI調整（ダークモード対応）
+# CSS: UI調整（ダークモード対応・ボタン視認性向上）
 st.markdown("""
     <style>
     .block-container { padding-top: 1rem !important; padding-bottom: 0rem !important; }
@@ -43,21 +44,13 @@ reader = load_ocr_reader()
 
 # --- 画像前処理 (OpenCV) ---
 def preprocess_image(img_np):
-    # 1. グレースケール化
     gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
-    
-    # 2. コントラスト強調 (CLAHE: Contrast Limited Adaptive Histogram Equalization)
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
     enhanced = clahe.apply(gray)
-    
-    # 3. 適応的二値化 (背景が白、文字が黒の状態で処理)
-    # 影やムラに強く、文字の輪郭をはっきりさせる
     thresh = cv2.adaptiveThreshold(
         enhanced, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
         cv2.THRESH_BINARY, 11, 2
     )
-    
-    # OCRは3チャンネル(RGB)を期待することが多いため戻す
     final_img = cv2.cvtColor(thresh, cv2.COLOR_GRAY2RGB)
     return final_img
 
@@ -99,15 +92,34 @@ def judge_answer(recognized, possible_answers):
         if any(v == ans_norm for v in variants): return True
     return False
 
-# --- データ読み込み ---
+# --- データ読み込み（エラーハンドリング強化） ---
 @st.cache_data
 def load_data():
+    # 正確なファイル名。実際のファイル名と完全に一致している必要があります。
     csv_file = "rekishi_questions.xlsx - Sheet1.csv"
-    try:
-        df = pd.read_csv(csv_file, header=None, names=["question", "answer"], encoding='utf-8')
-        return df
-    except:
-        return pd.DataFrame(columns=["question", "answer"])
+    
+    # 読み込みを試みるエンコーディングのリスト
+    encodings = ['utf-8', 'cp932', 'shift_jis', 'utf-8-sig']
+    
+    if os.path.exists(csv_file):
+        for enc in encodings:
+            try:
+                # header=Noneの場合、列名を指定する
+                df = pd.read_csv(csv_file, header=None, names=["question", "answer"], encoding=enc)
+                # 空白行を除去
+                df = df.dropna()
+                if not df.empty:
+                    return df
+            except Exception:
+                continue
+    
+    # ファイルが見つからない、または読み込めない場合のサンプルデータ
+    st.warning(f"CSVファイル '{csv_file}' が読み込めませんでした。サンプルデータを表示します。")
+    sample_data = {
+        "question": ["江戸幕府を開いたのは誰？", "1192年に作られた幕府は？", "聖徳太子が定めた制度は？"],
+        "answer": ["徳川家康", "鎌倉幕府", "冠位十二階"]
+    }
+    return pd.DataFrame(sample_data)
 
 df = load_data()
 
@@ -160,9 +172,8 @@ if not df.empty:
                 img_data = canvas_result.image_data.astype('uint8')
                 img_rgb = cv2.cvtColor(img_data, cv2.COLOR_RGBA2RGB)
                 
-                # 1. トリミング用のバウンディングボックス取得
+                # 1. トリミング
                 gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
-                # 反転させて文字部分を白くし、座標を取得
                 inv = cv2.bitwise_not(gray)
                 coords = cv2.findNonZero(inv)
                 
@@ -172,16 +183,13 @@ if not df.empty:
                     img_cropped = img_rgb[max(0, y-pad):min(img_rgb.shape[0], y+h+pad), 
                                           max(0, x-pad):min(img_rgb.shape[1], x+w+pad)]
                     
-                    # 2. OpenCVによる前処理（コントラスト・二値化）
                     processed_img = preprocess_image(img_cropped)
-                    
-                    # デバッグ用に前処理後の画像をサイドバーに表示（オプション）
-                    # st.sidebar.image(processed_img, caption="Processed Image")
                     
                     try:
                         ocr_results = reader.readtext(processed_img, detail=0)
                         recognized_raw = "".join(ocr_results)
-                        st.session_state.recognized_text = normalize_text(recognized_raw)
+                        clean_text = normalize_text(recognized_raw)
+                        st.session_state.recognized_text = clean_text if clean_text else recognized_raw
                         
                         possible_answers = [a.strip() for a in raw_answer.split('/')]
                         st.session_state.result = "正解" if judge_answer(recognized_raw, possible_answers) else "不正解"
@@ -198,4 +206,4 @@ if not df.empty:
             st.error(f"😭 **不正解** (読み: {st.session_state.recognized_text})")
             st.info(f"正解: **{raw_answer.replace('/', ' / ')}**")
 else:
-    st.error("問題データがありません。")
+    st.error("問題データがありません。CSVファイルがプログラムと同じフォルダにあるか確認してください。")
