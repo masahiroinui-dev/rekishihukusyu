@@ -19,10 +19,16 @@ except ModuleNotFoundError:
 # --- 設定 ---
 st.set_page_config(page_title="歴史・手書き自動採点アプリ", layout="centered")
 
-# CSS: UI調整（ダークモード対応・ボタン視認性向上）
+# CSS: UI調整（ダークモード対応・ボタン視認性向上・一画面に収めるための余白削減）
 st.markdown("""
     <style>
+    /* 全体の余白を最小化 */
     .block-container { padding-top: 1rem !important; padding-bottom: 0rem !important; }
+    
+    /* タイトルのサイズを少し小さく */
+    h1 { font-size: 1.8rem !important; margin-bottom: 0.5rem !important; }
+
+    /* キャンバスのツールバーボタンを強制的に視認性の高いスタイルに固定 */
     div[data-testid="stCanvas"] button {
         background-color: #FFFFFF !important;
         color: #000000 !important;
@@ -30,8 +36,16 @@ st.markdown("""
         border-radius: 4px !important;
         margin: 2px !important;
     }
+    
+    /* キャンバスの外枠 */
     .stCanvasContainer { border: 2px solid #4a4a4a; border-radius: 8px; background-color: #ffffff; }
-    .stAlert { padding: 0.5rem !important; margin-bottom: 0.5rem !important; }
+    
+    /* Alertやウィジェット間の余白を削減 */
+    .stAlert { padding: 0.4rem !important; margin-bottom: 0.5rem !important; }
+    [data-testid="stVerticalBlock"] > div { margin-top: -0.3rem !important; }
+    
+    /* ボタンの余白調整 */
+    .stButton > button { margin-top: 0.2rem !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -92,29 +106,22 @@ def judge_answer(recognized, possible_answers):
         if any(v == ans_norm for v in variants): return True
     return False
 
-# --- データ読み込み（エラーハンドリング強化） ---
+# --- データ読み込み ---
 @st.cache_data
 def load_data():
-    # 正確なファイル名。実際のファイル名と完全に一致している必要があります。
     csv_file = "rekishi_questions.xlsx - Sheet1.csv"
-    
-    # 読み込みを試みるエンコーディングのリスト
     encodings = ['utf-8', 'cp932', 'shift_jis', 'utf-8-sig']
-    
     if os.path.exists(csv_file):
         for enc in encodings:
             try:
-                # header=Noneの場合、列名を指定する
                 df = pd.read_csv(csv_file, header=None, names=["question", "answer"], encoding=enc)
-                # 空白行を除去
                 df = df.dropna()
                 if not df.empty:
                     return df
             except Exception:
                 continue
     
-    # ファイルが見つからない、または読み込めない場合のサンプルデータ
-    st.warning(f"CSVファイル '{csv_file}' が読み込めませんでした。サンプルデータを表示します。")
+    st.warning("サンプルデータを表示します。")
     sample_data = {
         "question": ["江戸幕府を開いたのは誰？", "1192年に作られた幕府は？", "聖徳太子が定めた制度は？"],
         "answer": ["徳川家康", "鎌倉幕府", "冠位十二階"]
@@ -141,7 +148,7 @@ def get_next_question():
     st.rerun()
 
 # --- UI ---
-st.title("📝 歴史 手書き採点 (OpenCV強化版)")
+st.title("📝 歴史 手書き採点")
 
 if not df.empty:
     q_idx = st.session_state.question_pool[st.session_state.current_pool_idx]
@@ -150,17 +157,22 @@ if not df.empty:
 
     st.info(f"**問題:** {question}")
 
-    col_s1, col_s2, col_btn = st.columns([2, 2, 1])
-    with col_s1: stroke_width = st.select_slider("ペンの太さ", options=range(1, 16), value=6)
+    # 操作系をよりコンパクトに配置
+    col_s1, col_btn = st.columns([3, 1])
+    with col_s1:
+        stroke_width = st.select_slider("ペンの太さ", options=range(1, 11), value=6)
     with col_btn:
-        if st.button("🔄 次へ", use_container_width=True): get_next_question()
+        if st.button("🔄 次へ", use_container_width=True):
+            get_next_question()
 
+    # キャンバスの高さを縮小 (280 -> 200)
     canvas_result = st_canvas(
         fill_color="rgba(255, 165, 0, 0.3)",
         stroke_width=stroke_width,
         stroke_color="#000000",
         background_color="#ffffff",
-        height=280, width=700,
+        height=200, 
+        width=700,
         drawing_mode="freedraw",
         key=f"canvas_q_{st.session_state.canvas_key_id}",
         update_streamlit=True,
@@ -168,11 +180,10 @@ if not df.empty:
 
     if st.button("✅ 採点する", use_container_width=True, type="primary"):
         if canvas_result.image_data is not None:
-            with st.spinner("OpenCVで画像を最適化中..."):
+            with st.spinner("判定中..."):
                 img_data = canvas_result.image_data.astype('uint8')
                 img_rgb = cv2.cvtColor(img_data, cv2.COLOR_RGBA2RGB)
                 
-                # 1. トリミング
                 gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
                 inv = cv2.bitwise_not(gray)
                 coords = cv2.findNonZero(inv)
@@ -198,6 +209,7 @@ if not df.empty:
                 else:
                     st.warning("文字が記入されていません。")
 
+    # 結果表示
     if st.session_state.result:
         if st.session_state.result == "正解":
             st.balloons()
@@ -205,5 +217,6 @@ if not df.empty:
         else:
             st.error(f"😭 **不正解** (読み: {st.session_state.recognized_text})")
             st.info(f"正解: **{raw_answer.replace('/', ' / ')}**")
+        st.caption(f"進捗: {st.session_state.current_pool_idx + 1} / {len(df)}")
 else:
-    st.error("問題データがありません。CSVファイルがプログラムと同じフォルダにあるか確認してください。")
+    st.error("問題データがありません。")
