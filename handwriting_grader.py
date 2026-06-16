@@ -141,16 +141,16 @@ def judge_answer(recognized, possible_answers):
         if any(v == ans_norm for v in variants): return True
     return False
 
-# --- CSV問題データのロードとフィルタリング (q0187〜q0361) ---
+# --- CSV問題データのロードとフィルタリング (q0187〜q0426) ---
 @st.cache_data
 def load_data():
     csv_file = "rekishi_questions.xlsx - Sheet1.csv"
     encodings = ['utf-8', 'cp932', 'shift_jis', 'utf-8-sig']
     
-    # 失敗時のダミーデータ生成（q0187〜q0361）
+    # 失敗時のダミーデータ生成（q0187〜q0426）
     def create_fallback_data():
         dummy_data = []
-        for i in range(187, 362):  # 187 から 361
+        for i in range(187, 427):  # 187 から 426
             dummy_data.append([f"q{i:04d}", f"【テスト問題 {i}】織田信長が明智光秀に襲われた京都のお寺はどこか？(答え:本能寺)", "本能寺"])
         df_fallback = pd.DataFrame(dummy_data, columns=["id", "question", "answer"])
         return df_fallback
@@ -172,7 +172,7 @@ def load_data():
                 df["question"] = df["question"].astype(str).str.strip()
                 df["answer"] = df["answer"].astype(str).str.strip()
                 
-                # IDの数字部分を抽出し、q0187〜q0361にフィルタリング
+                # IDの数字部分を抽出し、q0187〜q0426にフィルタリング
                 def get_qid_num(qid):
                     if pd.isna(qid):
                         return 0
@@ -180,7 +180,7 @@ def load_data():
                     return int(match.group()) if match else 0
                 
                 df["q_num"] = df["id"].apply(get_qid_num)
-                filtered_df = df[(df["q_num"] >= 187) & (df["q_num"] <= 361)].copy()
+                filtered_df = df[(df["q_num"] >= 187) & (df["q_num"] <= 426)].copy()
                 filtered_df = filtered_df.drop(columns=["q_num"])
                 
                 if len(filtered_df) == 0:
