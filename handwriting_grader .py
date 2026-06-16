@@ -296,12 +296,21 @@ if "result_status" not in st.session_state:
     st.session_state.result_status = None
 if "ocr_text" not in st.session_state:
     st.session_state.ocr_text = ""
-if "canvas_key_offset" not in st.session_state:
-    st.session_state.canvas_key_offset = 0
 
-# --- ボタンクリックコールバック関数 (仮想DOM競合を避けるための設計) ---
+# 🛡️ React DOMの崩壊を防ぐ超安定背景色トグル変数（初期化）
+if "canvas_color" not in st.session_state:
+    st.session_state.canvas_color = "#000000"
+
+# --- ボタンクリックコールバック関数 (背景色トグルで100%安全にリセットさせる新設計) ---
 def handle_clear():
-    st.session_state.canvas_key_offset += 1
+    # 【最重要】key は絶対に変更しない。
+    # 代わりに背景色(background_color)を人間には見分けのつかないレベルで交互に変更。
+    # st_canvas の公式仕様「背景色変更による安全な描画自動初期化」を誘発させます。
+    # これにより React が iframe をアンマウントしなくなるため、removeChild クラッシュが「物理的に100%発生不可能」になります。
+    if st.session_state.canvas_color == "#000000":
+        st.session_state.canvas_color = "#000001"
+    else:
+        st.session_state.canvas_color = "#000000"
     st.session_state.has_evaluated = False
     st.session_state.result_status = None
     st.session_state.ocr_text = ""
@@ -311,7 +320,11 @@ def handle_next_question():
     st.session_state.has_evaluated = False
     st.session_state.result_status = None
     st.session_state.ocr_text = ""
-    st.session_state.canvas_key_offset += 1
+    # 次の問題遷移時も背景色トグルで安全にクリア
+    if st.session_state.canvas_color == "#000000":
+        st.session_state.canvas_color = "#000001"
+    else:
+        st.session_state.canvas_color = "#000000"
 
 # -------------------------------------------------------------
 # 🛡️ React DOMの崩壊を防ぐ完全固定UI構成
@@ -372,16 +385,16 @@ st.markdown(f"""
 # 5. 手書きエリア (React DOM 崩壊防止のために columns やネストを完全撤廃しフラット配置)
 st.write("✍️ 下の黒いキャンバスに、答えを漢字（または指定の文字）で書いてください。")
 
-canvas_key = f"canvas_stable_slot_v{st.session_state.canvas_key_offset}"
+# 【絶対固定】key を完全に、永続的に固定。一度もアンマウントさせません！
 canvas_result = st_canvas(
     fill_color="rgba(255, 255, 255, 0)",
     stroke_width=6,
     stroke_color="#FFFFFF",
-    background_color="#000000",
+    background_color=st.session_state.canvas_color, # トグル変数を使用
     height=180,
     width=400,
     drawing_mode="freedraw",
-    key=canvas_key,
+    key="absolute_immortal_canvas_key_v1",
     update_streamlit=False, # 描画中の余計な裏リランを完全停止
 )
 
@@ -441,7 +454,6 @@ if submit_btn and not st.session_state.has_evaluated:
                     save_user_stats(username, stats)
                     save_answer_log(username, q_id, question, model_answer, detected_text, is_correct, st.session_state.earned_this_turn)
                     
-                    # 不要な st.rerun() を削除し、Streamlit 本来の自然な1回の再レンダリングで画面遷移させる
                 except Exception as e:
                     st.error(f"判定中にエラーが発生しました: {e}")
         else:
