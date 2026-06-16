@@ -12,7 +12,7 @@ from datetime import datetime
 # --- 設定 ---
 st.set_page_config(page_title="歴史手書きクイズ", layout="centered")
 
-# --- CSS: シンプルで美しい固定ダークUI ＆ 組み込みツールバーのプレミアム化 ---
+# --- CSS: 極限までシンプルなフラットダークUI ---
 st.markdown("""
     <style>
     /* 全体のコンテナ余白の最適化 */
@@ -85,7 +85,7 @@ st.markdown("""
         margin-bottom: 0.5rem !important;
     }
 
-    /* 🛡️ キャンバス内蔵ツールバーをはっきり見えるように極上スタイリング */
+    /* キャンバスツールバーボタンの調整 */
     div[data-testid="stCanvas"] button {
         background-color: #2b2b36 !important;
         border: 1px solid #3f3f52 !important;
@@ -93,27 +93,11 @@ st.markdown("""
         border-radius: 8px !important;
         padding: 6px 12px !important;
         margin-right: 5px !important;
-        transition: all 0.2s ease !important;
     }
     div[data-testid="stCanvas"] button:hover {
         background-color: #ff9800 !important;
         color: #000000 !important;
         border-color: #ff9800 !important;
-    }
-    div[data-testid="stCanvas"] .lucide {
-        color: #ff9800 !important;
-    }
-
-    /* コンボ表示バッジ */
-    .combo-badge {
-        display: inline-block;
-        background: linear-gradient(45deg, #ff5722, #ffc107);
-        color: white;
-        font-weight: bold;
-        padding: 0.25rem 0.6rem;
-        border-radius: 12px;
-        font-size: 0.95rem;
-        margin-top: 5px;
     }
 
     /* ガイド案内 */
@@ -312,19 +296,26 @@ if "result_status" not in st.session_state:
     st.session_state.result_status = None
 if "ocr_text" not in st.session_state:
     st.session_state.ocr_text = ""
-if "show_empty_warning" not in st.session_state:
-    st.session_state.show_empty_warning = False
-if "error_message" not in st.session_state:
-    st.session_state.error_message = ""
+if "info_msg" not in st.session_state:
+    st.session_state.info_msg = ""
+if "canvas_key_offset" not in st.session_state:
+    st.session_state.canvas_key_offset = 0
 
 # --- ボタンクリックコールバック関数 (仮想DOM競合を避けるための100%安全設計) ---
+def handle_clear():
+    st.session_state.canvas_key_offset += 1
+    st.session_state.has_evaluated = False
+    st.session_state.result_status = None
+    st.session_state.ocr_text = ""
+    st.session_state.info_msg = ""
+
 def handle_next_question():
     st.session_state.current_q_idx = random.randint(0, len(df_questions) - 1) if len(df_questions) > 0 else 0
     st.session_state.has_evaluated = False
     st.session_state.result_status = None
     st.session_state.ocr_text = ""
-    st.session_state.show_empty_warning = False
-    st.session_state.error_message = ""
+    st.session_state.info_msg = ""
+    st.session_state.canvas_key_offset += 1
 
 # -------------------------------------------------------------
 # 🛡️ React DOMの崩壊を防ぐ完全固定UI構成
@@ -393,6 +384,7 @@ st.markdown("""
 
 # 6. 手書きエリア (React DOM 崩壊防止のために columns やネストを完全撤廃しフラット配置)
 # 【絶対不変】keyを完全に固定化し、プロパティも変化させないことで iframe の React アンマウントを完全に回避。
+canvas_key = f"canvas_stable_slot_v{st.session_state.canvas_key_offset}"
 canvas_result = st_canvas(
     fill_color="rgba(255, 255, 255, 0)",
     stroke_width=6,
@@ -401,7 +393,7 @@ canvas_result = st_canvas(
     height=180,
     width=400,
     drawing_mode="freedraw",
-    key="absolute_immortal_canvas_key_v1", # 固定
+    key=canvas_key,
     update_streamlit=False, # 描画中の余計な裏リランを完全停止
     display_toolbar=True, # ツールバーを確実に有効化
 )
@@ -414,7 +406,7 @@ if submit_btn and not st.session_state.has_evaluated:
     if canvas_result is not None and canvas_result.image_data is not None:
         img_data = canvas_result.image_data
         if np.sum(img_data[:, :, 3]) > 0:
-            st.session_state.show_empty_warning = False
+            st.session_state.info_msg = "解読中..."
             try:
                 pil_img = Image.fromarray(img_data.astype('uint8'), 'RGBA')
                 processed_img = preprocess_image(pil_img)
@@ -442,10 +434,12 @@ if submit_btn and not st.session_state.has_evaluated:
                     earned = 100 + (st.session_state.combo - 1) * 20
                     st.session_state.score += earned
                     st.session_state.earned_this_turn = earned
+                    st.session_state.info_msg = f"🎯 正解！ 認識した文字：{detected_text} (+{earned} pts) combo: {st.session_state.combo}"
                 else:
                     st.session_state.result_status = "incorrect"
                     st.session_state.combo = 0
                     st.session_state.earned_this_turn = 0
+                    st.session_state.info_msg = f"❌ 不正解... 認識した文字：{detected_text} (正解：{model_answer.replace('/', ' / ')})"
                     
                 # 個人データの累積更新と保存
                 stats["total_questions"] += 1
@@ -460,56 +454,24 @@ if submit_btn and not st.session_state.has_evaluated:
                 save_answer_log(username, q_id, question, model_answer, detected_text, is_correct, st.session_state.earned_this_turn)
                 
             except Exception as e:
-                st.session_state.error_message = f"判定中にエラーが発生しました: {e}"
+                st.session_state.info_msg = f"⚠️ 判定中にエラーが発生しました: {e}"
         else:
-            st.session_state.show_empty_warning = True
+            st.session_state.info_msg = "⚠️ キャンバスに何も書かれていません！"
 
 # 9. 判定結果の表示スロット
-# 🛡️ React DOMの崩壊を防ぐため、st.successやst.errorを直接出さず、
-# 100%静的な単一の st.markdown 内でHTMLを流し込むだけの構造に刷新。
+# 🛡️ React DOMの崩壊を防ぐため、HTMLタグを含む st.markdown を完全撤廃。
+# 100%安全な Streamlit 標準のプレーンテキスト出力 st.text/st.info/st.write の静的書き換えに統一。
 st.markdown("---")
+result_placeholder = st.empty()
 
-if st.session_state.get("error_message", ""):
-    html_content = f"""
-    <div style="background-color: rgba(244, 67, 54, 0.15); border: 1px solid #F44336; border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
-        <h4 style="color: #F44336; margin: 0 0 0.5rem 0;">⚠️ システムエラー</h4>
-        <p style="margin: 0; color: #ffffff; font-size: 1rem;">{st.session_state.error_message}</p>
-    </div>
-    """
-elif st.session_state.has_evaluated:
-    if st.session_state.result_status == "correct":
-        html_content = f"""
-        <div style="background-color: rgba(76, 175, 80, 0.15); border: 1px solid #4CAF50; border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
-            <h4 style="color: #4CAF50; margin: 0 0 0.5rem 0;">🎯 正解！</h4>
-            <p style="margin: 0; color: #ffffff; font-size: 1rem;">手書き認識: <b>{st.session_state.ocr_text}</b> (+{st.session_state.earned_this_turn} pts)</p>
-            <div class="combo-badge">🔥 {st.session_state.combo} COMBO !</div>
-        </div>
-        """
-    else:
-        html_content = f"""
-        <div style="background-color: rgba(244, 67, 54, 0.15); border: 1px solid #F44336; border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
-            <h4 style="color: #F44336; margin: 0 0 0.5rem 0;">❌ 不正解</h4>
-            <p style="margin: 0 0 0.5rem 0; color: #ffffff; font-size: 1rem;">手書き認識: <b>{st.session_state.ocr_text}</b></p>
-            <p style="margin: 0; color: #FFC107; font-size: 1rem;">正解は <b>{model_answer.replace('/', ' / ')}</b> でした。</p>
-        </div>
-        """
-elif st.session_state.show_empty_warning:
-    html_content = """
-    <div style="background-color: rgba(255, 152, 0, 0.15); border: 1px solid #FF9800; border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
-        <h4 style="color: #FF9800; margin: 0 0 0.5rem 0;">⚠️ 警告</h4>
-        <p style="margin: 0; color: #ffffff; font-size: 1rem;">キャンバスに何も書かれていません！何か書いてから判定してください。</p>
-    </div>
-    """
+# 判定結果を表示用のテキスト文字列としてシンプルに作成
+if st.session_state.info_msg:
+    result_text = st.session_state.info_msg
 else:
-    html_content = """
-    <div style="background-color: #1e1e24; border: 1px solid #3f3f52; border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
-        <h4 style="color: #FF9800; margin: 0 0 0.5rem 0;">📋 判定結果待ち</h4>
-        <p style="margin: 0; color: #ccc; font-size: 0.95rem;">答えを手書きして、上の「🔥 判定する！」ボタンを押してください。</p>
-    </div>
-    """
+    result_text = "📋 判定結果：答えを手書きして、上の「🔥 判定する！」ボタンを押してください。"
 
-# 表示
-st.markdown(html_content, unsafe_allow_html=True)
+# 枠の差し替えではなく、すでに存在する「1つのプレーンなテキストエリア」の文字だけを更新
+result_placeholder.write(result_text)
 
 # 次の問題へ進むボタン (安全なコールバック経由)
 st.button("➡️ 次の問題へ進む", use_container_width=True, type="primary", disabled=not st.session_state.has_evaluated, on_click=handle_next_question)
