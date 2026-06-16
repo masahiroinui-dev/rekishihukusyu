@@ -12,7 +12,7 @@ from datetime import datetime
 # --- 設定 ---
 st.set_page_config(page_title="歴史手書きクイズ", layout="centered")
 
-# --- CSS: シンプルで美しい固定ダークUI ---
+# --- CSS: シンプルで美しい固定ダークUI ＆ 組み込みツールバーのプレミアム化 ---
 st.markdown("""
     <style>
     /* 全体のコンテナ余白の最適化 */
@@ -82,21 +82,26 @@ st.markdown("""
         border: 2px solid #3f3f52 !important;
         border-radius: 12px !important;
         overflow: hidden !important;
-        margin-bottom: 1rem !important;
+        margin-bottom: 0.5rem !important;
     }
 
-    /* キャンバスツールバーボタンを非表示、または標準化 */
+    /* 🛡️ キャンバス内蔵ツールバーをはっきり見えるように極上スタイリング */
     div[data-testid="stCanvas"] button {
-        background-color: #3f51b5 !important;
+        background-color: #2b2b36 !important;
+        border: 1px solid #3f3f52 !important;
         color: #ffffff !important;
-        border: none !important;
-        border-radius: 6px !important;
+        border-radius: 8px !important;
         padding: 6px 12px !important;
-        font-weight: bold !important;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.2) !important;
+        margin-right: 5px !important;
+        transition: all 0.2s ease !important;
     }
     div[data-testid="stCanvas"] button:hover {
-        background-color: #5c6bc0 !important;
+        background-color: #ff9800 !important;
+        color: #000000 !important;
+        border-color: #ff9800 !important;
+    }
+    div[data-testid="stCanvas"] .lucide {
+        color: #ff9800 !important;
     }
 
     /* コンボ表示バッジ */
@@ -109,6 +114,17 @@ st.markdown("""
         border-radius: 12px;
         font-size: 0.95rem;
         margin-top: 5px;
+    }
+
+    /* ガイド案内 */
+    .guide-box {
+        background-color: #1e1e24;
+        border: 1px dashed #3f3f52;
+        padding: 0.8rem;
+        border-radius: 10px;
+        margin-bottom: 1rem;
+        font-size: 0.85rem;
+        color: #ccc;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -297,34 +313,12 @@ if "result_status" not in st.session_state:
 if "ocr_text" not in st.session_state:
     st.session_state.ocr_text = ""
 
-# 🛡️ React DOMの崩壊を防ぐ超安定背景色トグル変数（初期化）
-if "canvas_color" not in st.session_state:
-    st.session_state.canvas_color = "#000000"
-
-# --- ボタンクリックコールバック関数 (背景色トグルで100%安全にリセットさせる新設計) ---
-def handle_clear():
-    # 【最重要】key は絶対に変更しない。
-    # 代わりに背景色(background_color)を人間には見分けのつかないレベルで交互に変更。
-    # st_canvas の公式仕様「背景色変更による安全な描画自動初期化」を誘発させます。
-    # これにより React が iframe をアンマウントしなくなるため、removeChild クラッシュが「物理的に100%発生不可能」になります。
-    if st.session_state.canvas_color == "#000000":
-        st.session_state.canvas_color = "#000001"
-    else:
-        st.session_state.canvas_color = "#000000"
-    st.session_state.has_evaluated = False
-    st.session_state.result_status = None
-    st.session_state.ocr_text = ""
-
+# --- ボタンクリックコールバック関数 (仮想DOM競合を避けるための100%安全設計) ---
 def handle_next_question():
     st.session_state.current_q_idx = random.randint(0, len(df_questions) - 1) if len(df_questions) > 0 else 0
     st.session_state.has_evaluated = False
     st.session_state.result_status = None
     st.session_state.ocr_text = ""
-    # 次の問題遷移時も背景色トグルで安全にクリア
-    if st.session_state.canvas_color == "#000000":
-        st.session_state.canvas_color = "#000001"
-    else:
-        st.session_state.canvas_color = "#000000"
 
 # -------------------------------------------------------------
 # 🛡️ React DOMの崩壊を防ぐ完全固定UI構成
@@ -382,29 +376,34 @@ st.markdown(f"""
     </div>
 """, unsafe_allow_html=True)
 
-# 5. 手書きエリア (React DOM 崩壊防止のために columns やネストを完全撤廃しフラット配置)
-st.write("✍️ 下の黒いキャンバスに、答えを漢字（または指定の文字）で書いてください。")
+# 5. 操作方法ガイド (ゴミ箱ボタンの案内)
+st.markdown("""
+<div class="guide-box">
+    <b>✍️ キャンバスの操作方法:</b><br>
+    ・文字を書き直すときや次の問題に進むときは、黒いキャンバスの左下にある <b>ゴミ箱アイコン 🗑️</b> を押してクリアしてください。<br>
+    ・1つ前の状態に戻したいときは、<b>矢印アイコン ↩️</b> を押してください。
+</div>
+""", unsafe_allow_html=True)
 
-# 【絶対固定】key を完全に、永続的に固定。一度もアンマウントさせません！
+# 6. 手書きエリア (React DOM 崩壊防止のために columns やネストを完全撤廃しフラット配置)
+# 【絶対不変】keyを完全に固定化し、プロパティも変化させないことで iframe の React アンマウントを完全に回避。
 canvas_result = st_canvas(
     fill_color="rgba(255, 255, 255, 0)",
     stroke_width=6,
     stroke_color="#FFFFFF",
-    background_color=st.session_state.canvas_color, # トグル変数を使用
+    background_color="#000000", # 固定
     height=180,
     width=400,
     drawing_mode="freedraw",
-    key="absolute_immortal_canvas_key_v1",
+    key="absolute_immortal_canvas_key_v1", # 固定
     update_streamlit=False, # 描画中の余計な裏リランを完全停止
+    display_toolbar=True, # ツールバーを確実に有効化
 )
 
-# 6. コントロールボタン
+# 7. 判定ボタン
 submit_btn = st.button("🔥 判定する！", use_container_width=True, type="primary", disabled=st.session_state.has_evaluated)
 
-# クリアボタンはコールバック経由で安全に実行
-st.button("🧹 画面クリア", use_container_width=True, on_click=handle_clear)
-
-# 7. OCR判定処理
+# 8. OCR判定処理
 if submit_btn and not st.session_state.has_evaluated:
     if canvas_result is not None and canvas_result.image_data is not None:
         img_data = canvas_result.image_data
@@ -454,12 +453,13 @@ if submit_btn and not st.session_state.has_evaluated:
                     save_user_stats(username, stats)
                     save_answer_log(username, q_id, question, model_answer, detected_text, is_correct, st.session_state.earned_this_turn)
                     
+                    # ⚠️ 二重競合の原因だった st.rerun() を完全に排除し、安全に描画を完了させます
                 except Exception as e:
                     st.error(f"判定中にエラーが発生しました: {e}")
         else:
             st.warning("⚠️ キャンバスに何も書かれていません！")
 
-# 8. 判定結果の表示スロット
+# 9. 判定結果の表示スロット
 st.markdown("---")
 result_title_slot = st.empty()
 result_detail_slot = st.empty()
