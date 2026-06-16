@@ -10,17 +10,17 @@ import os
 from datetime import datetime
 
 # --- 設定 ---
-st.set_page_config(page_title="歴史手書きクエスト - 漢字で答える歴史ゲーム", layout="centered")
+st.set_page_config(page_title="歴史手書きクイズ", layout="centered")
 
-# --- CSS: ゲーミフィケーションデザイン (DOMレイアウト完全固定化スタイル) ---
+# --- CSS: シンプルで美しい固定ダークUI ---
 st.markdown("""
     <style>
-    /* 全体のコンテナ調整 */
+    /* 全体のコンテナ余白の最適化 */
     .block-container { padding-top: 1rem !important; padding-bottom: 1rem !important; }
     
-    /* ヘッダー・ゲームタイトル */
+    /* アプリタイトル */
     .game-title {
-        font-size: 2.2rem;
+        font-size: 2rem;
         font-weight: 800;
         background: linear-gradient(135deg, #FF9800, #F44336);
         -webkit-background-clip: text;
@@ -30,7 +30,7 @@ st.markdown("""
         text-shadow: 1px 1px 2px rgba(0,0,0,0.1);
     }
     
-    /* ステータスバーのデザイン */
+    /* シンプルなステータスバー */
     .status-container {
         display: flex;
         justify-content: space-between;
@@ -51,14 +51,11 @@ st.markdown("""
     
     .status-val {
         color: #FFC107;
-        font-size: 1.2rem;
+        font-size: 1.15rem;
         font-family: 'Courier New', Courier, monospace;
     }
 
-    .heart-active { color: #E91E63; font-size: 1.4rem; margin-right: 2px;}
-    .heart-broken { color: #555555; font-size: 1.4rem; margin-right: 2px;}
-
-    /* 問題カード */
+    /* 問題提示カード */
     .quiz-card {
         background-color: #2b2b36;
         border: 2px solid #3f3f52;
@@ -68,19 +65,19 @@ st.markdown("""
         box-shadow: 0 4px 10px rgba(0,0,0,0.2);
     }
     .quiz-num {
-        font-size: 0.9rem;
+        font-size: 0.85rem;
         color: #9e9e9e;
         font-weight: bold;
     }
     .quiz-text {
-        font-size: 1.3rem;
+        font-size: 1.25rem;
         font-weight: 700;
         color: #ffffff;
         line-height: 1.5;
         margin-top: 5px;
     }
 
-    /* キャンバス周り */
+    /* キャンバスボタンの調整 */
     div[data-testid="stCanvas"] button {
         background-color: #3f51b5 !important;
         color: #ffffff !important;
@@ -89,38 +86,21 @@ st.markdown("""
         padding: 6px 12px !important;
         font-weight: bold !important;
         box-shadow: 0 2px 4px rgba(0,0,0,0.2) !important;
-        transition: all 0.3s ease !important;
     }
     div[data-testid="stCanvas"] button:hover {
         background-color: #5c6bc0 !important;
-        transform: translateY(-1px) !important;
     }
 
-    /* コンボ表示用 */
+    /* コンボ表示バッジ */
     .combo-badge {
         display: inline-block;
         background: linear-gradient(45deg, #ff5722, #ffc107);
         color: white;
         font-weight: bold;
-        padding: 0.3rem 0.8rem;
-        border-radius: 20px;
-        font-size: 1.1rem;
-        margin-bottom: 0.5rem;
-    }
-
-    /* ランク演出 */
-    .rank-box {
-        text-align: center;
-        padding: 1.5rem;
-        border-radius: 15px;
-        margin: 1rem 0;
-        box-shadow: 0 8px 16px rgba(0,0,0,0.25);
-    }
-    .rank-title {
-        font-size: 3rem;
-        font-weight: 900;
-        margin: 0;
-        text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        padding: 0.25rem 0.6rem;
+        border-radius: 12px;
+        font-size: 0.95rem;
+        margin-top: 5px;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -130,7 +110,7 @@ LOG_DIR = "user_data"
 if not os.path.exists(LOG_DIR):
     os.makedirs(LOG_DIR)
 
-# --- OCRリーダーの初期化 (キャッシュして高速化) ---
+# --- OCRリーダーの初期化 (キャッシュ) ---
 @st.cache_resource
 def load_ocr_reader():
     import easyocr
@@ -139,10 +119,10 @@ def load_ocr_reader():
 try:
     reader = load_ocr_reader()
 except Exception as e:
-    st.error(f"OCR初期化中にエラーが発生しました。requirements.txt の設定を確認してください: {e}")
+    st.error(f"OCR初期化中にエラーが発生しました: {e}")
     reader = None
 
-# --- CSV問題データのロードとフィルタリング ---
+# --- CSV問題データのロードとフィルタリング (q0187〜q0361) ---
 CSV_FILE_PATH = "rekishi_questions.xlsx - Sheet1.csv"
 
 @st.cache_data
@@ -150,7 +130,7 @@ def load_questions(filepath):
     def create_fallback_data():
         dummy_data = []
         for i in range(187, 362):
-            dummy_data.append([f"q{i:04d}", f"【フォールバック問題 {i}】織田信長が明智光秀に襲われた京都のお寺はどこか？(答え:本能寺)", "本能寺"])
+            dummy_data.append([f"q{i:04d}", f"【テスト問題 {i}】織田信長が明智光秀に襲われた京都のお寺はどこか？(答え:本能寺)", "本能寺"])
         return pd.DataFrame(dummy_data, columns=["q_id", "question", "answer"])
 
     if not os.path.exists(filepath):
@@ -167,7 +147,7 @@ def load_questions(filepath):
                 continue
         
         if df is None or df.empty:
-            raise ValueError("CSVデータのパースに失敗、または空のファイルです。")
+            raise ValueError("CSVデータのパースに失敗しました。")
             
         df = df.iloc[:, :3]
         df.columns = ["q_id", "question", "answer"]
@@ -183,11 +163,9 @@ def load_questions(filepath):
         
         df["q_num"] = df["q_id"].apply(get_qid_num)
         filtered_df = df[(df["q_num"] >= 187) & (df["q_num"] <= 361)].copy()
-        
         filtered_df = filtered_df.drop(columns=["q_num"])
         
         if len(filtered_df) == 0:
-            st.error("指定範囲(q0187～q0361)の質問データが見つかりませんでした。全問題データを使用します。")
             return df
             
         return filtered_df
@@ -197,7 +175,7 @@ def load_questions(filepath):
 
 df_questions = load_questions(CSV_FILE_PATH)
 
-# --- ユーザーデータ・ログイン管理 ---
+# --- ユーザーデータ管理機能 ---
 def get_user_file(username, kind="stats"):
     safe_name = re.sub(r'[^a-zA-Z0-9_-]', '', username)
     return os.path.join(LOG_DIR, f"{safe_name}_{kind}.csv")
@@ -215,7 +193,6 @@ def load_user_stats(username):
         "username": username,
         "high_score": 0,
         "max_combo": 0,
-        "total_games": 0,
         "total_questions": 0,
         "correct_answers": 0
     }
@@ -235,7 +212,6 @@ def save_answer_log(username, q_id, question, correct_ans, user_ans, is_correct,
         "is_correct": 1 if is_correct else 0,
         "score_earned": score
     }
-    
     if os.path.exists(filepath):
         try:
             df = pd.read_csv(filepath)
@@ -246,30 +222,20 @@ def save_answer_log(username, q_id, question, correct_ans, user_ans, is_correct,
         df = pd.DataFrame([new_row])
     df.to_csv(filepath, index=False)
 
-def get_answer_logs(username):
-    filepath = get_user_file(username, "log")
-    if os.path.exists(filepath):
-        try:
-            return pd.read_csv(filepath)
-        except:
-            return pd.DataFrame()
-    return pd.DataFrame()
-
-# --- テキスト処理 (表記ゆれ吸収) ---
+# --- テキスト表記ゆれ処理 ---
 def normalize_text(text):
     if not text:
         return ""
     import jaconv
     text = text.replace(" ", "").replace("　", "")
-    text = jaconv.h2z(text, kana=True, digit=True, ascii=True)  # 半角を全角に
-    text = jaconv.hira2kata(text)  # ひらがなをカタカナに統一
+    text = jaconv.h2z(text, kana=True, digit=True, ascii=True)
+    text = jaconv.hira2kata(text)
     text = text.lower()
     return text
 
 def judge_answer(raw_recognized, model_answer):
     choices = [ans.strip() for ans in model_answer.split("/") if ans.strip()]
     cleaned_recognized = normalize_text(raw_recognized)
-    
     for choice in choices:
         cleaned_choice = normalize_text(choice)
         if cleaned_choice in cleaned_recognized or cleaned_recognized in cleaned_choice:
@@ -277,7 +243,7 @@ def judge_answer(raw_recognized, model_answer):
                 return True
     return False
 
-# --- 画像前処理 (OCR精度向上) ---
+# --- 画像前処理 ---
 def preprocess_image(pil_img):
     img_np = np.array(pil_img)
     if img_np.shape[2] == 4:
@@ -290,7 +256,6 @@ def preprocess_image(pil_img):
         gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
     
     _, thresh = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY_INV)
-    
     coords = cv2.findNonZero(thresh)
     if coords is not None:
         x, y, w, h = cv2.boundingRect(coords)
@@ -304,356 +269,184 @@ def preprocess_image(pil_img):
         cropped = gray[y_start:y_end, x_start:x_end]
         cropped = cv2.equalizeHist(cropped)
         return Image.fromarray(cropped)
-    
     return pil_img
 
-# --- ゲーム状態の初期化 ---
-def init_game_state():
-    st.session_state.game_active = True
-    st.session_state.game_over = False
+# --- セッションステート初期化 (ゲーム状態) ---
+if "score" not in st.session_state:
     st.session_state.score = 0
+if "combo" not in st.session_state:
     st.session_state.combo = 0
-    st.session_state.lives = 3
+if "answered_count" not in st.session_state:
     st.session_state.answered_count = 0
+if "correct_count" not in st.session_state:
     st.session_state.correct_count = 0
-    
-    num_questions = len(df_questions)
-    sample_size = min(10, num_questions)
-    
-    if num_questions > 0:
-        st.session_state.q_index_list = random.sample(range(num_questions), sample_size)
-    else:
-        st.session_state.q_index_list = []
-        
-    st.session_state.current_quiz_pos = 0
+if "current_q_idx" not in st.session_state:
+    st.session_state.current_q_idx = random.randint(0, len(df_questions) - 1) if len(df_questions) > 0 else 0
+if "has_evaluated" not in st.session_state:
     st.session_state.has_evaluated = False
+if "result_status" not in st.session_state:
     st.session_state.result_status = None
+if "ocr_text" not in st.session_state:
     st.session_state.ocr_text = ""
+if "canvas_key_offset" not in st.session_state:
     st.session_state.canvas_key_offset = 0
 
-# --- セッションステート初期化 ---
-if "screen" not in st.session_state:
-    st.session_state.screen = "login"
-if "game_active" not in st.session_state:
-    st.session_state.game_active = False
-if "game_over" not in st.session_state:
-    st.session_state.game_over = False
-if "user_stats" not in st.session_state:
-    st.session_state.user_stats = None
+# -------------------------------------------------------------
+# 🛡️ React DOMの崩壊を防ぐ完全固定UI構成
+# -------------------------------------------------------------
+st.markdown('<div class="game-title">⚔️ 歴史手書きクエスト ⚔️</div>', unsafe_allow_html=True)
 
-# ログイン状態の確認・強制画面制御
-if "username" not in st.session_state:
-    st.session_state.screen = "login"
-elif not st.session_state.game_active and not st.session_state.game_over:
-    st.session_state.screen = "lobby"
-elif st.session_state.game_over:
-    st.session_state.screen = "result"
+# 1. ログイン情報管理 (サイドバーに常駐)
+st.sidebar.subheader("👤 プレイヤー情報")
+username_input = st.sidebar.text_input("プレイヤー名:", value=st.session_state.get("username", "ゲスト")).strip()
+
+if "username" not in st.session_state or st.session_state.username != username_input:
+    st.session_state.username = username_input
+    st.session_state.user_stats = load_user_stats(username_input)
+
+username = st.session_state.username
+stats = st.session_state.user_stats
+
+# 2. 個人累計スコアをゲーム感覚でサイドバーに表示
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 🏆 累計ベストレコード")
+st.sidebar.metric("自己ハイスコア", f"{stats['high_score']} pts")
+st.sidebar.metric("最大コンボ数", f"{stats['max_combo']} 連鎖")
+
+accumulated_accuracy = (stats['correct_answers'] / stats['total_questions'] * 100) if stats['total_questions'] > 0 else 0.0
+st.sidebar.write(f"累計正解数: {stats['correct_answers']} / {stats['total_questions']} 問")
+st.sidebar.write(f"累計正答率: {accumulated_accuracy:.1f} %")
+
+# 3. メイン画面のステータスバー (現在のプレイ結果をシンプル表示)
+correct_pct = (st.session_state.correct_count / st.session_state.answered_count * 100) if st.session_state.answered_count > 0 else 0.0
+
+st.markdown(f"""
+    <div class="status-container">
+        <div class="status-item">🏆 SCORE: <span class="status-val">{st.session_state.score}</span></div>
+        <div class="status-item">🔥 COMBO: <span class="status-val">{st.session_state.combo}</span></div>
+        <div class="status-item">📊 正解率: <span class="status-val">{st.session_state.correct_count}/{st.session_state.answered_count} ({correct_pct:.1f}%)</span></div>
+    </div>
+""", unsafe_allow_html=True)
+
+# 4. 問題カードの描画
+if len(df_questions) > 0:
+    q_idx = st.session_state.current_q_idx
+    row = df_questions.iloc[q_idx]
+    q_id = row["q_id"]
+    question = row["question"]
+    model_answer = row["answer"]
 else:
-    st.session_state.screen = "game"
+    q_id = "q0000"
+    question = "問題データがありません。"
+    model_answer = ""
 
+st.markdown(f"""
+    <div class="quiz-card">
+        <div class="quiz-num">問題 ID: {q_id}</div>
+        <div class="quiz-text">{question}</div>
+    </div>
+""", unsafe_allow_html=True)
 
-# -------------------------------------------------------------
-# 🛡️ React DOM クラッシュを物理的に不可能にする完全固定スロット定義
-# -------------------------------------------------------------
-# どんな画面遷移でも要素の順番が変わらないよう、プレースホルダーの数を固定化します。
-title_slot = st.empty()
-sidebar_slot = st.sidebar.empty() # サイドバーも固定化
-main_content_slot = st.empty()
+# 5. カラム配置 (手書きエリア ＆ ボタン)
+col_canvas, col_control = st.columns([2, 1])
 
-# ヘッダーは常に固定スロットへ描画
-title_slot.markdown('<div class="game-title">⚔️ 歴史手書きクエスト ⚔️</div><p style="text-align: center; color: #9e9e9e; margin-bottom: 1.5rem;">【出題範囲: 鎌倉・室町・戦国時代等 (q0187〜q0361)】正確な漢字手書きでハイスコアを狙え！</p>', unsafe_allow_html=True)
+with col_canvas:
+    st.write("✍️ 下の黒いキャンバスに、答えを漢字（または指定の文字）で書いてください。")
+    # keyを問題ID(q_id)とクリア用オフセットのみで一意に決定。無駄な再マウントでのクラッシュを防止
+    canvas_key = f"canvas_{q_id}_offset_{st.session_state.canvas_key_offset}"
+    canvas_result = st_canvas(
+        fill_color="rgba(255, 255, 255, 0)",
+        stroke_width=6,
+        stroke_color="#FFFFFF",
+        background_color="#000000",
+        height=180,
+        width=400,
+        drawing_mode="freedraw",
+        key=canvas_key,
+        update_streamlit=False, # 描画中の余計な裏リランを完全停止
+    )
 
+with col_control:
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    # 判定ボタン (既に判定済みの場合は無効化)
+    submit_btn = st.button("🔥 判定する！", use_container_width=True, type="primary", disabled=st.session_state.has_evaluated)
+    
+    # クリアボタン
+    if st.button("🧹 クリア", use_container_width=True):
+        st.session_state.canvas_key_offset += 1
+        st.session_state.has_evaluated = False
+        st.session_state.result_status = None
+        st.rerun()
 
-# --- 1. [LOGIN SCREEN] ---
-if st.session_state.screen == "login":
-    with main_content_slot.container():
-        st.subheader("👤 冒険者登録 / ログイン")
-        username_input = st.text_input("プレイヤー名を入力してください:", max_chars=12, placeholder="例: レキシ丸").strip()
-        
-        if st.button("ゲームスタート！", use_container_width=True):
-            if username_input:
-                st.session_state.username = username_input
-                st.session_state.user_stats = load_user_stats(username_input)
-                st.session_state.screen = "lobby"
-                st.rerun()
-            else:
-                st.warning("名前を入力してください。")
-
-
-# --- 2. [LOBBY SCREEN] ---
-elif st.session_state.screen == "lobby":
-    username = st.session_state.username
-    stats = st.session_state.user_stats
-
-    # 固定化されたサイドバースロットをロビー用に描画
-    with sidebar_slot.container():
-        st.subheader(f"🛡️ プレイヤー: {username}")
-        st.metric("🏆 最高ハイスコア", f"{stats['high_score']} pts")
-        st.metric("🔥 最大コンボ", f"{stats['max_combo']} 連鎖")
-        st.metric("📊 累計正解率", f"{ (stats['correct_answers']/stats['total_questions']*100) if stats['total_questions'] > 0 else 0:.1f} %")
-        st.write(f"🎮 挑戦回数: {stats['total_games']} 回")
-        
-        st.markdown("---")
-        if st.button("🚪 別のユーザーでログイン"):
-            del st.session_state.username
-            del st.session_state.user_stats
-            st.session_state.screen = "login"
-            st.rerun()
-
-    with main_content_slot.container():
-        st.markdown("""
-        <div style="background-color: #1e1e24; padding: 1.5rem; border-radius: 15px; border: 1px solid #333; text-align: center; margin-bottom: 1.5rem;">
-            <h3>⚔️ クエストに挑戦する準備はできましたか？ ⚔️</h3>
-            <p>1回につきランダムに10問出題されます。<br>
-            持ちライフは <b>3つ</b> 。間違えるとライフが減少し、0になるとゲームオーバーです！<br>
-            連続で正解すると <b>コンボボーナス</b> が発生し、スコアが跳ね上がります！</p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("🔥 クエスト開始！ (10問)", use_container_width=True, type="primary"):
-                init_game_state()
-                st.session_state.screen = "game"
-                st.rerun()
-        with col2:
-            with st.expander("📝 あなたの過去の回答ログを表示"):
-                logs_df = get_answer_logs(username)
-                if not logs_df.empty:
-                    st.dataframe(logs_df.sort_values(by="datetime", ascending=False), use_container_width=True)
-                else:
-                    st.info("まだ回答ログがありません。まずはクエストに挑戦してみましょう！")
-
-
-# --- 3. [RESULT SCREEN] ---
-elif st.session_state.screen == "result":
-    username = st.session_state.username
-    stats = st.session_state.user_stats
-
-    # 固定化されたサイドバースロットを結果画面用に描画
-    with sidebar_slot.container():
-        st.subheader(f"🛡️ プレイヤー: {username}")
-        st.metric("🏆 最高ハイスコア", f"{stats['high_score']} pts")
-        st.metric("🔥 最大コンボ", f"{stats['max_combo']} 連鎖")
-        st.metric("📊 累計正解率", f"{ (stats['correct_answers']/stats['total_questions']*100) if stats['total_questions'] > 0 else 0:.1f} %")
-        st.write(f"🎮 挑戦回数: {stats['total_games']} 回")
-        st.markdown("---")
-
-    with main_content_slot.container():
-        stats_updated = False
-        if st.session_state.score > stats["high_score"]:
-            stats["high_score"] = st.session_state.score
-            stats_updated = True
-        if st.session_state.combo > stats["max_combo"]:
-            stats["max_combo"] = st.session_state.combo
-            stats_updated = True
-        
-        if "stats_saved" not in st.session_state or not st.session_state.stats_saved:
-            stats["total_games"] += 1
-            stats["total_questions"] += st.session_state.answered_count
-            stats["correct_answers"] += st.session_state.correct_count
-            save_user_stats(username, stats)
-            st.session_state.stats_saved = True
-        
-        accuracy = (st.session_state.correct_count / st.session_state.answered_count * 100) if st.session_state.answered_count > 0 else 0
-        if accuracy >= 90:
-            rank, r_color, r_bg = "SSランク", "#FFD700", "rgba(255, 215, 0, 0.1)"
-        elif accuracy >= 75:
-            rank, r_color, r_bg = "Sランク", "#FF8C00", "rgba(255, 140, 0, 0.1)"
-        elif accuracy >= 50:
-            rank, r_color, r_bg = "Aランク", "#4CAF50", "rgba(76, 175, 80, 0.1)"
+# 6. OCR判定処理
+if submit_btn and not st.session_state.has_evaluated:
+    if canvas_result is not None and canvas_result.image_data is not None:
+        img_data = canvas_result.image_data
+        if np.sum(img_data[:, :, 3]) > 0:
+            with st.spinner("AI採点中..."):
+                try:
+                    pil_img = Image.fromarray(img_data.astype('uint8'), 'RGBA')
+                    processed_img = preprocess_image(pil_img)
+                    
+                    img_np = np.array(processed_img)
+                    ocr_results = reader.readtext(img_np)
+                    
+                    detected_text = ""
+                    if ocr_results:
+                        detected_text = "".join([res[1] for res in ocr_results]).strip()
+                    
+                    if not detected_text:
+                        detected_text = "（読み取り不可）"
+                    
+                    st.session_state.ocr_text = detected_text
+                    st.session_state.has_evaluated = True
+                    st.session_state.answered_count += 1
+                    
+                    is_correct = judge_answer(detected_text, model_answer)
+                    
+                    if is_correct:
+                        st.session_state.result_status = "correct"
+                        st.session_state.combo += 1
+                        st.session_state.correct_count += 1
+                        earned = 100 + (st.session_state.combo - 1) * 20
+                        st.session_state.score += earned
+                        st.session_state.earned_this_turn = earned
+                    else:
+                        st.session_state.result_status = "incorrect"
+                        st.session_state.combo = 0
+                        st.session_state.earned_this_turn = 0
+                        
+                    # 個人データの累積更新と保存
+                    stats["total_questions"] += 1
+                    if is_correct:
+                        stats["correct_answers"] += 1
+                    if st.session_state.score > stats["high_score"]:
+                        stats["high_score"] = st.session_state.score
+                    if st.session_state.combo > stats["max_combo"]:
+                        stats["max_combo"] = st.session_state.combo
+                    
+                    save_user_stats(username, stats)
+                    save_answer_log(username, q_id, question, model_answer, detected_text, is_correct, st.session_state.earned_this_turn)
+                    
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"判定中にエラーが発生しました: {e}")
         else:
-            rank, r_color, r_bg = "Bランク", "#9E9E9E", "rgba(158, 158, 158, 0.1)"
+            st.warning("⚠️ キャンバスに何も書かれていません！")
 
-        st.markdown(f"""
-        <div class="rank-box" style="background-color: {r_bg}; border: 3px solid {r_color}; margin-bottom: 1.5rem;">
-            <h4 style="color: {r_color}; margin: 0;">🎉 リザルト発表 🎉</h4>
-            <div class="rank-title" style="color: {r_color};">{rank}</div>
-            <p style="font-size: 1.2rem; color: #fff; margin: 10px 0;">最終スコア: <b style="color: #FFC107; font-size: 1.5rem;">{st.session_state.score}</b> pts</p>
-            <p style="color: #ccc;">正解数: {st.session_state.correct_count} / 挑戦した問題: {st.session_state.answered_count}問 (正解率: {accuracy:.1f}%)</p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        if stats_updated:
-            st.success("🏆 ハイスコアまたは最大コンボを更新しました！")
-        
-        col_btn1, col_btn2 = st.columns(2)
-        with col_btn1:
-            if st.button("🔄 もう一度クエストに挑戦", use_container_width=True, type="primary"):
-                st.session_state.stats_saved = False
-                init_game_state()
-                st.session_state.screen = "game"
-                st.rerun()
-        with col_btn2:
-            if st.button("🏠 ロビー（トップ）に戻る", use_container_width=True):
-                st.session_state.stats_saved = False
-                st.session_state.game_active = False
-                st.session_state.game_over = False
-                st.session_state.screen = "lobby"
-                st.rerun()
+# 7. 判定結果の固定表示
+if st.session_state.has_evaluated:
+    st.markdown("---")
+    if st.session_state.result_status == "correct":
+        st.success(f"🎯 **正解！** 手書き認識: 「{st.session_state.ocr_text}」 (+{st.session_state.earned_this_turn} pts)")
+        st.markdown(f'<div class="combo-badge">🔥 {st.session_state.combo} COMBO !</div>', unsafe_allow_html=True)
+    else:
+        st.error(f"❌ **不正解** 手書き認識: 「{st.session_state.ocr_text}」")
+        st.info(f"正解は **{model_answer.replace('/', ' / ')}** でした。")
 
-
-# --- 4. [GAME SCREEN] ---
-elif st.session_state.screen == "game":
-    g_curr_pos = st.session_state.current_quiz_pos
-    g_list = st.session_state.q_index_list
-
-    # 安全な配列保護
-    if g_curr_pos >= len(g_list):
-        g_curr_pos = len(g_list) - 1
-
-    g_idx = g_list[g_curr_pos]
-    g_row = df_questions.iloc[g_idx]
-    g_qid = g_row["q_id"]
-    g_question = g_row["question"]
-    g_model_answer = g_row["answer"]
-
-    # 進行中のライフ/問題完了判定
-    if st.session_state.game_active:
-        if len(g_list) == 0 or st.session_state.current_quiz_pos >= len(g_list) or st.session_state.lives <= 0:
-            st.session_state.game_over = True
-            st.session_state.game_active = False
-            st.session_state.screen = "result"
-            st.rerun()
-
-    # 固定化されたサイドバースロットをゲーム画面用にクリア表示
-    with sidebar_slot.container():
-        st.subheader(f"🛡️ プレイヤー: {st.session_state.username}")
-        st.write("⚔️ クエスト進行中...")
-        st.markdown("---")
-        if st.button("🏳️ クエストを断念する"):
-            st.session_state.game_over = True
-            st.session_state.game_active = False
-            st.session_state.screen = "result"
-            st.rerun()
-
-    # ゲームのメイン描画ブロックをすべてメインスロットの中に閉じ込めます。
-    # これにより、React DOMノードがログイン/ロビー画面時のものと一切混ざらず、完全に同一のスロットで独立レンダリングされます。
-    with main_content_slot.container():
-        # ステータスバー
-        g_hearts = "".join(['<span class="heart-active">❤️</span>' for _ in range(st.session_state.lives)])
-        g_broken_hearts = "".join(['<span class="heart-broken">🖤</span>' for _ in range(3 - st.session_state.lives)])
-        
-        st.markdown(f"""
-            <div class="status-container">
-                <div class="status-item">🏆 SCORE: <span class="status-val">{st.session_state.score}</span></div>
-                <div class="status-item">🔥 COMBO: <span class="status-val">{st.session_state.combo}</span></div>
-                <div class="status-item">💖 LIFE: {g_hearts}{g_broken_hearts}</div>
-            </div>
-        """, unsafe_allow_html=True)
-
-        # プログレスバー
-        g_total = len(g_list) if len(g_list) > 0 else 10
-        g_prog_val = (g_curr_pos + 1) / g_total
-        st.progress(g_prog_val, text=f"進捗: {g_curr_pos + 1} / {g_total} 問目")
-
-        # 問題カード
-        st.markdown(f"""
-            <div class="quiz-card">
-                <div class="quiz-num">問題 ID: {g_qid}</div>
-                <div class="quiz-text">{g_question}</div>
-            </div>
-        """, unsafe_allow_html=True)
-
-        # 左右カラム配置
-        g_col1, g_col2 = st.columns([2, 1])
-
-        with g_col1:
-            st.write("✍️ 下の黒いキャンバスに答えを書いてください。")
-            # 【重要】key を問題ID(g_qid)とキャンバスオフセット（クリア用）の静的組み合わせに固定！
-            # 同じ問題の回答判定中や結果表示時に、プログラムが不必要に canvas_key を変動させて
-            # iframe を急激に React からアンマウントするのを防ぎ、removeChildクラッシュを100%根絶します。
-            canvas_key = f"canvas_q_{g_qid}_v{st.session_state.canvas_key_offset}"
-            canvas_result = st_canvas(
-                fill_color="rgba(255, 255, 255, 0)",
-                stroke_width=6,
-                stroke_color="#FFFFFF",
-                background_color="#000000",
-                height=180,
-                width=400,
-                drawing_mode="freedraw",
-                key=canvas_key,
-                update_streamlit=False,
-            )
-
-        with g_col2:
-            st.markdown("<br>", unsafe_allow_html=True)
-            submit_btn = st.button("🔥 判定する！", use_container_width=True, type="primary", disabled=st.session_state.has_evaluated)
-            
-            if st.button("🧹 キャンバスをクリア", use_container_width=True):
-                st.session_state.canvas_key_offset += 1
-                st.session_state.has_evaluated = False
-                st.session_state.result_status = None
-                st.rerun()
-
-        # 判定実行ロジック
-        if submit_btn:
-            if canvas_result is not None and canvas_result.image_data is not None:
-                img_data = canvas_result.image_data
-                if np.sum(img_data[:, :, 3]) > 0:
-                    with st.spinner("手書き文字をAIが解読中..."):
-                        try:
-                            pil_img = Image.fromarray(img_data.astype('uint8'), 'RGBA')
-                            processed_img = preprocess_image(pil_img)
-                            
-                            img_np = np.array(processed_img)
-                            ocr_results = reader.readtext(img_np)
-                            
-                            detected_text = ""
-                            if ocr_results:
-                                detected_text = "".join([res[1] for res in ocr_results]).strip()
-                            
-                            if not detected_text:
-                                detected_text = "（読み取れませんでした）"
-                            
-                            st.session_state.ocr_text = detected_text
-                            st.session_state.has_evaluated = True
-                            st.session_state.answered_count += 1
-                            
-                            is_correct = judge_answer(detected_text, g_model_answer)
-                            
-                            if is_correct:
-                                st.session_state.result_status = "correct"
-                                st.session_state.combo += 1
-                                st.session_state.correct_count += 1
-                                earned = 100 + (st.session_state.combo - 1) * 20
-                                st.session_state.score += earned
-                                st.session_state.earned_this_turn = earned
-                            else:
-                                st.session_state.result_status = "incorrect"
-                                st.session_state.lives -= 1
-                                st.session_state.combo = 0
-                                st.session_state.earned_this_turn = 0
-                                
-                            save_answer_log(
-                                st.session_state.username, 
-                                g_qid, 
-                                g_question, 
-                                g_model_answer, 
-                                detected_text, 
-                                is_correct, 
-                                st.session_state.earned_this_turn
-                            )
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"判定エラー: {e}")
-                else:
-                    st.warning("⚠️ キャンバスに何も書かれていません！")
-
-        # 結果表示
-        if st.session_state.has_evaluated:
-            st.markdown("---")
-            if st.session_state.result_status == "correct":
-                st.success(f"🎯 **正解！** 手書き認識: 「{st.session_state.ocr_text}」 (+{st.session_state.earned_this_turn} pts)")
-                st.markdown(f'<div class="combo-badge">🔥 {st.session_state.combo} COMBO</div>', unsafe_allow_html=True)
-            else:
-                st.error(f"❌ **不正解** 手書き認識: 「{st.session_state.ocr_text}」")
-                st.info(f"正解は **{g_model_answer.replace('/', ' / ')}** でした。")
-                st.warning(f"💔 ライフが1つ減少しました。残りライフ: {st.session_state.lives}")
-
-            if st.button("➡️ 次の問題へ進む", use_container_width=True, type="primary"):
-                st.session_state.current_quiz_pos += 1
-                st.session_state.has_evaluated = False
-                st.session_state.result_status = None
-                st.session_state.canvas_key_offset = 0 # リセットオフセットを戻す
-                st.rerun()
+    if st.button("➡️ 次の問題へ進む", use_container_width=True, type="primary"):
+        st.session_state.current_q_idx = random.randint(0, len(df_questions) - 1) if len(df_questions) > 0 else 0
+        st.session_state.has_evaluated = False
+        st.session_state.result_status = None
+        st.session_state.canvas_key_offset = 0
+        st.rerun()
