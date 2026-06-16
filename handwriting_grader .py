@@ -307,7 +307,7 @@ if "username" not in st.session_state or st.session_state.username != username_i
 username = st.session_state.username
 stats = st.session_state.user_stats
 
-# 2. 個人累計スコアをゲーム感覚でサイドバーに表示
+# 2. 個人累計スコアをサイドバーに表示
 st.sidebar.markdown("---")
 st.sidebar.markdown("### 🏆 累計ベストレコード")
 st.sidebar.metric("自己ハイスコア", f"{stats['high_score']} pts")
@@ -352,7 +352,6 @@ col_canvas, col_control = st.columns([2, 1])
 
 with col_canvas:
     st.write("✍️ 下の黒いキャンバスに、答えを漢字（または指定の文字）で書いてください。")
-    # keyを問題ID(q_id)とクリア用オフセットのみで一意に決定。無駄な再マウントでのクラッシュを防止
     canvas_key = f"canvas_{q_id}_offset_{st.session_state.canvas_key_offset}"
     canvas_result = st_canvas(
         fill_color="rgba(255, 255, 255, 0)",
@@ -368,10 +367,8 @@ with col_canvas:
 
 with col_control:
     st.markdown("<br><br>", unsafe_allow_html=True)
-    # 判定ボタン (既に判定済みの場合は無効化)
     submit_btn = st.button("🔥 判定する！", use_container_width=True, type="primary", disabled=st.session_state.has_evaluated)
     
-    # クリアボタン
     if st.button("🧹 クリア", use_container_width=True):
         st.session_state.canvas_key_offset += 1
         st.session_state.has_evaluated = False
@@ -434,19 +431,29 @@ if submit_btn and not st.session_state.has_evaluated:
         else:
             st.warning("⚠️ キャンバスに何も書かれていません！")
 
-# 7. 判定結果の固定表示
-if st.session_state.has_evaluated:
-    st.markdown("---")
-    if st.session_state.result_status == "correct":
-        st.success(f"🎯 **正解！** 手書き認識: 「{st.session_state.ocr_text}」 (+{st.session_state.earned_this_turn} pts)")
-        st.markdown(f'<div class="combo-badge">🔥 {st.session_state.combo} COMBO !</div>', unsafe_allow_html=True)
-    else:
-        st.error(f"❌ **不正解** 手書き認識: 「{st.session_state.ocr_text}」")
-        st.info(f"正解は **{model_answer.replace('/', ' / ')}** でした。")
+# 7. 判定結果の固定スロット表示
+# React DOM の要素増減を回避するため、結果用のプレースホルダーを最初に確保して動的に中身を入れ替えます
+st.markdown("---")
+result_title_slot = st.empty()
+result_detail_slot = st.empty()
 
-    if st.button("➡️ 次の問題へ進む", use_container_width=True, type="primary"):
-        st.session_state.current_q_idx = random.randint(0, len(df_questions) - 1) if len(df_questions) > 0 else 0
-        st.session_state.has_evaluated = False
-        st.session_state.result_status = None
-        st.session_state.canvas_key_offset = 0
-        st.rerun()
+if st.session_state.has_evaluated:
+    if st.session_state.result_status == "correct":
+        result_title_slot.success(f"🎯 **正解！** 手書き認識: 「{st.session_state.ocr_text}」 (+{st.session_state.earned_this_turn} pts)")
+        result_detail_slot.markdown(f'<div class="combo-badge">🔥 {st.session_state.combo} COMBO !</div>', unsafe_allow_html=True)
+    else:
+        result_title_slot.error(f"❌ **不正解** 手書き認識: 「{st.session_state.ocr_text}」")
+        result_detail_slot.info(f"正解は **{model_answer.replace('/', ' / ')}** でした。")
+else:
+    result_title_slot.info("📋 判定結果：答えを手書きして、上の「🔥判定する！」ボタンを押してください。")
+    result_detail_slot.write("ここに正しい判定結果とコンボ数が表示されます。")
+
+# 「➡️ 次の問題へ進む」ボタンは常に同じ場所に表示しておき、判定前はクリック不可（disabled）にします
+next_btn = st.button("➡️ 次の問題へ進む", use_container_width=True, type="primary", disabled=not st.session_state.has_evaluated)
+
+if next_btn:
+    st.session_state.current_q_idx = random.randint(0, len(df_questions) - 1) if len(df_questions) > 0 else 0
+    st.session_state.has_evaluated = False
+    st.session_state.result_status = None
+    st.session_state.canvas_key_offset = 0
+    st.rerun()
