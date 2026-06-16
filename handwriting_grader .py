@@ -441,7 +441,7 @@ if submit_btn and not st.session_state.has_evaluated:
                     save_user_stats(username, stats)
                     save_answer_log(username, q_id, question, model_answer, detected_text, is_correct, st.session_state.earned_this_turn)
                     
-                    st.rerun()
+                    # 不要な st.rerun() を削除し、Streamlit 本来の自然な1回の再レンダリングで画面遷移させる
                 except Exception as e:
                     st.error(f"判定中にエラーが発生しました: {e}")
         else:
