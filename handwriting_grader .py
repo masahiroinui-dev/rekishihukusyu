@@ -77,7 +77,15 @@ st.markdown("""
         margin-top: 5px;
     }
 
-    /* キャンバスボタンの調整 */
+    /* キャンバス外観スタイル */
+    div[data-testid="stCanvas"] {
+        border: 2px solid #3f3f52 !important;
+        border-radius: 12px !important;
+        overflow: hidden !important;
+        margin-bottom: 1rem !important;
+    }
+
+    /* キャンバスツールバーボタンを非表示、または標準化 */
     div[data-testid="stCanvas"] button {
         background-color: #3f51b5 !important;
         color: #ffffff !important;
@@ -361,32 +369,29 @@ st.markdown(f"""
     </div>
 """, unsafe_allow_html=True)
 
-# 5. カラム配置 (手書きエリア ＆ ボタン)
-col_canvas, col_control = st.columns([2, 1])
+# 5. 手書きエリア (React DOM 崩壊防止のために columns やネストを完全撤廃しフラット配置)
+st.write("✍️ 下の黒いキャンバスに、答えを漢字（または指定の文字）で書いてください。")
 
-with col_canvas:
-    st.write("✍️ 下の黒いキャンバスに、答えを漢字（または指定の文字）で書いてください。")
-    canvas_key = f"canvas_stable_slot_v{st.session_state.canvas_key_offset}"
-    canvas_result = st_canvas(
-        fill_color="rgba(255, 255, 255, 0)",
-        stroke_width=6,
-        stroke_color="#FFFFFF",
-        background_color="#000000",
-        height=180,
-        width=400,
-        drawing_mode="freedraw",
-        key=canvas_key,
-        update_streamlit=False, # 描画中の余計な裏リランを完全停止
-    )
+canvas_key = f"canvas_stable_slot_v{st.session_state.canvas_key_offset}"
+canvas_result = st_canvas(
+    fill_color="rgba(255, 255, 255, 0)",
+    stroke_width=6,
+    stroke_color="#FFFFFF",
+    background_color="#000000",
+    height=180,
+    width=400,
+    drawing_mode="freedraw",
+    key=canvas_key,
+    update_streamlit=False, # 描画中の余計な裏リランを完全停止
+)
 
-with col_control:
-    st.markdown("<br><br>", unsafe_allow_html=True)
-    submit_btn = st.button("🔥 判定する！", use_container_width=True, type="primary", disabled=st.session_state.has_evaluated)
-    
-    # クリアボタンはコールバック経由で安全に実行
-    st.button("🧹 クリア", use_container_width=True, on_click=handle_clear)
+# 6. コントロールボタン
+submit_btn = st.button("🔥 判定する！", use_container_width=True, type="primary", disabled=st.session_state.has_evaluated)
 
-# 6. OCR判定処理
+# クリアボタンはコールバック経由で安全に実行
+st.button("🧹 画面クリア", use_container_width=True, on_click=handle_clear)
+
+# 7. OCR判定処理
 if submit_btn and not st.session_state.has_evaluated:
     if canvas_result is not None and canvas_result.image_data is not None:
         img_data = canvas_result.image_data
@@ -442,8 +447,7 @@ if submit_btn and not st.session_state.has_evaluated:
         else:
             st.warning("⚠️ キャンバスに何も書かれていません！")
 
-# 7. 判定結果の固定スロット表示
-# React DOM の要素増減を回避するため、結果用のプレースホルダーを最初に確保して動的に中身を入れ替えます
+# 8. 判定結果の表示スロット
 st.markdown("---")
 result_title_slot = st.empty()
 result_detail_slot = st.empty()
@@ -459,6 +463,5 @@ else:
     result_title_slot.info("📋 判定結果：答えを手書きして、上の「🔥判定する！」ボタンを押してください。")
     result_detail_slot.write("ここに正しい判定結果とコンボ数が表示されます。")
 
-# 「➡️ 次の問題へ進む」ボタンは常に同じ場所に表示しておき、判定前はクリック不可（disabled）にします
-# コールバック (handle_next_question) 経由で実行することで、安全かつ迅速なDOM更新を保証します
+# 次の問題へ進むボタン (安全なコールバック経由)
 st.button("➡️ 次の問題へ進む", use_container_width=True, type="primary", disabled=not st.session_state.has_evaluated, on_click=handle_next_question)
