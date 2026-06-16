@@ -1,13 +1,11 @@
 import streamlit as st
-from streamlit_drawable_canvas import st_canvas
 import pandas as pd
-from PIL import Image, ImageOps
 import random
 import numpy as np
 import re
-import cv2
 import os
 from datetime import datetime
+import streamlit.components.v1 as components
 
 # --- 設定 ---
 st.set_page_config(page_title="歴史手書きクイズ", layout="centered")
@@ -77,33 +75,6 @@ st.markdown("""
         margin-top: 5px;
     }
 
-    /* キャンバス外観スタイル */
-    div[data-testid="stCanvas"] {
-        border: 2px solid #3f3f52 !important;
-        border-radius: 12px !important;
-        overflow: hidden !important;
-        margin-bottom: 0.5rem !important;
-    }
-
-    /* 🛡️ キャンバス内蔵ツールバーをはっきり見えるように極上スタイリング */
-    div[data-testid="stCanvas"] button {
-        background-color: #2b2b36 !important;
-        border: 1px solid #3f3f52 !important;
-        color: #ffffff !important;
-        border-radius: 8px !important;
-        padding: 6px 12px !important;
-        margin-right: 5px !important;
-        transition: all 0.2s ease !important;
-    }
-    div[data-testid="stCanvas"] button:hover {
-        background-color: #ff9800 !important;
-        color: #000000 !important;
-        border-color: #ff9800 !important;
-    }
-    div[data-testid="stCanvas"] .lucide {
-        color: #ff9800 !important;
-    }
-
     /* コンボ表示バッジ */
     .combo-badge {
         display: inline-block;
@@ -168,21 +139,9 @@ LOG_DIR = "user_data"
 if not os.path.exists(LOG_DIR):
     os.makedirs(LOG_DIR)
 
-# --- 🛡️ OCRリーダーの超遅延インポート＆初期化 (クラッシュを100%防止する安全キャッシュ) ---
-@st.cache_resource
-def load_ocr_reader_safe():
-    try:
-        # 起動時にはインポートせず、関数が呼ばれたタイミングで初めて遅延インポートします
-        import easyocr
-        return easyocr.Reader(['ja', 'en'], gpu=False), True
-    except Exception as e:
-        # インポート失敗、またはシステムライブラリ（libGL.so等）不足時はNoneを返し、簡易判定モードにします
-        return None, False
-
 # --- CSV問題データのロードとフィルタリング (q0187〜q0361) ---
 CSV_FILE_PATH = "rekishi_questions.xlsx - Sheet1.csv"
 
-# 🛡️ キャッシュ関数を安全に定義 (この中での Streamlit UI オブジェクト呼び出しは絶対禁止)
 @st.cache_data
 def load_questions_safe(filepath):
     def create_fallback_data():
@@ -190,7 +149,7 @@ def load_questions_safe(filepath):
         for i in range(187, 362):
             dummy_data.append([f"q{i:04d}", f"【テスト問題 {i}】織田信長が明智光秀に襲われた京都のお寺はどこか？(答え:本能寺)", "本能寺"])
         df_fallback = pd.DataFrame(dummy_data, columns=["q_id", "question", "answer"])
-        return df_fallback, False # (データ, 読み込み成否)
+        return df_fallback, False
 
     if not os.path.exists(filepath):
         return create_fallback_data()
@@ -214,7 +173,6 @@ def load_questions_safe(filepath):
         df["question"] = df["question"].astype(str).str.strip()
         df["answer"] = df["answer"].astype(str).str.strip()
         
-        # 🛡️ 欠損値(NaN)や数値型が流れ込んだ場合のTypeErrorを完全に防ぐ型安全パーサー
         def get_qid_num(qid):
             if pd.isna(qid):
                 return 0
@@ -235,7 +193,6 @@ def load_questions_safe(filepath):
 # 安全なロードを実行
 df_questions, load_success = load_questions_safe(CSV_FILE_PATH)
 
-# 万が一CSVのロードに失敗した場合の警告は、キャッシュの外側（安全なエリア）で表示
 if not load_success:
     st.sidebar.warning("⚠️ 問題ファイルが見つかりません。テスト問題を使用中。")
 
@@ -307,33 +264,273 @@ def judge_answer(raw_recognized, model_answer):
                 return True
     return False
 
-# --- 画像前処理 ---
-def preprocess_image(pil_img):
-    img_np = np.array(pil_img)
-    if img_np.shape[2] == 4:
-        alpha = img_np[:, :, 3] / 255.0
-        bg = np.ones_like(img_np[:, :, :3]) * 255
-        for c in range(3):
-            bg[:, :, c] = img_np[:, :, c] * alpha + bg[:, :, c] * (1 - alpha)
-        gray = cv2.cvtColor(bg.astype(np.uint8), cv2.COLOR_RGB2GRAY)
-    else:
-        gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
-    
-    _, thresh = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY_INV)
-    coords = cv2.findNonZero(thresh)
-    if coords is not None:
-        x, y, w, h = cv2.boundingRect(coords)
-        margin = 15
-        h_img, w_img = gray.shape
-        x_start = max(0, x - margin)
-        y_start = max(0, y - margin)
-        x_end = min(w_img, x + w + margin)
-        y_end = min(h_img, y + h + margin)
+# --- 🛡️ 超安定 HTML5 手書きカスタムコンポーネント (Google Input Tools API搭載) ---
+# このフォルダ/HTMLファイルを起動時に動的生成し、双方向通信コンポーネントとして宣言。
+# React iframe のアンマウントを完全に回避し、100%安全かつ世界最高の手書き漢字認識を提供します。
+
+HTML_CONTENT = """<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <script src="streamlit-component-lib.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #000000;
+            color: #ffffff;
+            font-family: sans-serif;
+            overflow: hidden;
+        }
+        #canvas-container {
+            position: relative;
+            width: 100%;
+            max-width: 400px;
+            margin: 0 auto;
+        }
+        canvas {
+            background-color: #111115;
+            border: 2px solid #3f3f52;
+            border-radius: 12px;
+            display: block;
+            touch-action: none;
+            cursor: crosshair;
+        }
+        #tools {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 8px;
+            max-width: 400px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        button {
+            background-color: #2b2b36;
+            border: 1px solid #3f3f52;
+            color: #ffffff;
+            border-radius: 8px;
+            padding: 10px 16px;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            flex: 1;
+            margin: 0 4px;
+        }
+        button:hover {
+            background-color: #ff9800;
+            color: #000000;
+            border-color: #ff9800;
+        }
+        #btn-submit {
+            background-color: #ff9800;
+            color: #000000;
+            border-color: #ff9800;
+        }
+        #btn-submit:hover {
+            background-color: #ffa726;
+        }
+        #status {
+            text-align: center;
+            font-size: 12px;
+            color: #888;
+            margin-top: 6px;
+        }
+    </style>
+</head>
+<body>
+    <div id="canvas-container">
+        <canvas id="canvas" width="400" height="180"></canvas>
+        <div id="tools">
+            <button id="btn-clear">🧹 クリア</button>
+            <button id="btn-submit">🔥 判定する！</button>
+        </div>
+        <div id="status">ここに文字を書いてください</div>
+    </div>
+
+    <script>
+        // Streamlit APIの初期化
+        function onStreamlitAPIReady() {
+            Streamlit.setFrameHeight(245);
+        }
         
-        cropped = gray[y_start:y_end, x_start:x_end]
-        cropped = cv2.equalizeHist(cropped)
-        return Image.fromarray(cropped)
-    return pil_img
+        if (window.Streamlit) {
+            onStreamlitAPIReady();
+        } else {
+            window.addEventListener("message", function(e) {
+                if (e.data.type === "streamlit:render") {
+                    if (window.Streamlit) onStreamlitAPIReady();
+                }
+            });
+        }
+
+        const canvas = document.getElementById("canvas");
+        const ctx = canvas.getContext("2d");
+        const btnClear = document.getElementById("btn-clear");
+        const btnSubmit = document.getElementById("btn-submit");
+        const statusDiv = document.getElementById("status");
+
+        // ストロークデータの記録用
+        let ink = [];
+        let currentStrokeX = [];
+        let currentStrokeY = [];
+        let currentStrokeT = [];
+        let isDrawing = false;
+        let lastX = 0;
+        let lastY = 0;
+
+        // 描画パラメータ設定
+        ctx.strokeStyle = "#FFFFFF";
+        ctx.lineWidth = 6;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+
+        function getPos(e) {
+            const rect = canvas.getBoundingClientRect();
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+            return {
+                x: clientX - rect.left,
+                y: clientY - rect.top
+            };
+        }
+
+        function startDrawing(e) {
+            isDrawing = true;
+            const pos = getPos(e);
+            lastX = pos.x;
+            lastY = pos.y;
+            
+            currentStrokeX = [pos.x];
+            currentStrokeY = [pos.y];
+            currentStrokeT = [Date.now()];
+            
+            ctx.beginPath();
+            ctx.moveTo(pos.x, pos.y);
+            e.preventDefault();
+        }
+
+        function draw(e) {
+            if (!isDrawing) return;
+            const pos = getPos(e);
+            
+            ctx.beginPath();
+            ctx.moveTo(lastX, lastY);
+            ctx.lineTo(pos.x, pos.y);
+            ctx.stroke();
+            
+            lastX = pos.x;
+            lastY = pos.y;
+            
+            currentStrokeX.push(pos.x);
+            currentStrokeY.push(pos.y);
+            currentStrokeT.push(Date.now());
+            
+            e.preventDefault();
+        }
+
+        function stopDrawing(e) {
+            if (!isDrawing) return;
+            isDrawing = false;
+            
+            if (currentStrokeX.length > 0) {
+                ink.push([currentStrokeX, currentStrokeY, currentStrokeT]);
+            }
+            e.preventDefault();
+        }
+
+        // マウス & タッチイベントハンドラ
+        canvas.addEventListener("mousedown", startDrawing);
+        canvas.addEventListener("mousemove", draw);
+        window.addEventListener("mouseup", stopDrawing);
+
+        canvas.addEventListener("touchstart", startDrawing, {passive: false});
+        canvas.addEventListener("touchmove", draw, {passive: false});
+        window.addEventListener("touchend", stopDrawing);
+
+        // 🧹 画面クリア処理
+        btnClear.addEventListener("click", () => {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ink = [];
+            statusDiv.textContent = "クリアしました。文字を書いてください。";
+            statusDiv.style.color = "#888";
+            if (window.Streamlit) {
+                Streamlit.setComponentValue(""); // 空文字を返却
+            }
+        });
+
+        // 🤖 Google Input Tools API を用いた超高精度手書き認識
+        btnSubmit.addEventListener("click", async () => {
+            if (ink.length === 0) {
+                statusDiv.textContent = "⚠️ キャンバスに何も書かれていません！";
+                statusDiv.style.color = "#ff9800";
+                return;
+            }
+
+            statusDiv.textContent = "🤖 AIで文字を高速解読中...";
+            statusDiv.style.color = "#ff9800";
+
+            const payload = {
+                "app": "mobilesearch",
+                "iscjk": "1",
+                "oe": "utf-8",
+                "input_type": "0",
+                "car_backspace": "1",
+                "car_forwardspace": "1",
+                "car_space": "1",
+                "car_newline": "1",
+                "car_tab": "1",
+                "ink": ink,
+                "language": "ja"
+            };
+
+            try {
+                const response = await fetch("https://www.google.com/inputtools/request?ime=handwriting&app=mobilesearch&cs=1&oe=utf-8", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify(payload)
+                });
+                
+                const data = await response.json();
+                if (data && data[0] === "SUCCESS" && data[1] && data[1][0] && data[1][0][1]) {
+                    const candidates = data[1][0][1];
+                    const bestCandidate = candidates[0]; // 最有力候補の漢字
+                    
+                    statusDiv.textContent = `解読結果: 「${bestCandidate}」 を判定中...`;
+                    statusDiv.style.color = "#4CAF50";
+                    
+                    // Streamlit（Python側）へリアルタイムに双方向通信！
+                    if (window.Streamlit) {
+                        Streamlit.setComponentValue(bestCandidate);
+                    }
+                } else {
+                    throw new Error("フォーマットエラー");
+                }
+            } catch (err) {
+                statusDiv.textContent = "⚠️ 通信エラーが発生しました。もう一度判定ボタンを押してください。";
+                statusDiv.style.color = "#F44336";
+            }
+        });
+    </script>
+</body>
+</html>
+"""
+
+# --- 🛡️ 起動時の一時フォルダ構築 ＆ コンポーネント登録 ---
+PARENT_DIR = os.path.dirname(os.path.abspath(__file__))
+BUILD_DIR = os.path.join(PARENT_DIR, "handwriting_component")
+
+if not os.path.exists(BUILD_DIR):
+    os.makedirs(BUILD_DIR)
+
+# index.html 書き出し
+with open(os.path.join(BUILD_DIR, "index.html"), "w", encoding="utf-8") as f:
+    f.write(HTML_CONTENT)
+
+# Streamlit Component 宣言 (双方向バインディング)
+handwriting_canvas = components.declare_component("handwriting_canvas", path=BUILD_DIR)
 
 # --- セッションステート初期化 (ゲーム状態) ---
 if "score" not in st.session_state:
@@ -354,12 +551,10 @@ if "ocr_text" not in st.session_state:
     st.session_state.ocr_text = ""
 if "info_msg" not in st.session_state:
     st.session_state.info_msg = ""
-if "canvas_key_offset" not in st.session_state:
-    st.session_state.canvas_key_offset = 0
-if "self_check_mode" not in st.session_state:
-    st.session_state.self_check_mode = False
+if "canvas_reset_trigger" not in st.session_state:
+    st.session_state.canvas_reset_trigger = 0
 
-# 安全なローカル変数定義
+# 安全な問題データバインディング
 q_idx = st.session_state.current_q_idx
 if len(df_questions) > 0:
     row = df_questions.iloc[q_idx]
@@ -372,63 +567,13 @@ else:
     model_answer = ""
 
 # --- ボタンクリックコールバック関数 (仮想DOM競合を避けるための100%安全設計) ---
-def handle_clear():
-    # 🛡️ React keyを変更せずに、背景色をトグルさせて手書き領域をリセット（不変DOM）
-    st.session_state.canvas_key_offset += 1
-    st.session_state.has_evaluated = False
-    st.session_state.result_status = None
-    st.session_state.ocr_text = ""
-    st.session_state.info_msg = ""
-
 def handle_next_question():
     st.session_state.current_q_idx = random.randint(0, len(df_questions) - 1) if len(df_questions) > 0 else 0
     st.session_state.has_evaluated = False
     st.session_state.result_status = None
     st.session_state.ocr_text = ""
     st.session_state.info_msg = ""
-    st.session_state.canvas_key_offset += 1
-
-def handle_self_correct():
-    st.session_state.result_status = "correct"
-    st.session_state.combo += 1
-    st.session_state.correct_count += 1
-    st.session_state.answered_count += 1
-    earned = 100 + (st.session_state.combo - 1) * 20
-    st.session_state.score += earned
-    st.session_state.earned_this_turn = earned
-    
-    username = st.session_state.username
-    stats = st.session_state.user_stats
-    stats["total_questions"] += 1
-    stats["correct_answers"] += 1
-    if st.session_state.score > stats["high_score"]:
-        stats["high_score"] = st.session_state.score
-    if stats["high_score"] > 0:
-        pass
-    if st.session_state.combo > stats["max_combo"]:
-        stats["max_combo"] = st.session_state.combo
-    
-    save_user_stats(username, stats)
-    save_answer_log(username, q_id, question, model_answer, "⭕(自己判定・正解)", True, earned)
-    st.session_state.info_msg = f"🎯 正解にしました！ (+{earned} pts) combo: {st.session_state.combo}"
-
-def handle_self_incorrect():
-    st.session_state.result_status = "incorrect"
-    st.session_state.combo = 0
-    st.session_state.earned_this_turn = 0
-    st.session_state.answered_count += 1
-    
-    username = st.session_state.username
-    stats = st.session_state.user_stats
-    stats["total_questions"] += 1
-    save_user_stats(username, stats)
-    save_answer_log(username, q_id, question, model_answer, "❌(自己判定・不正解)", False, 0)
-    st.session_state.info_msg = f"❌ 不正解として記録しました。(正解：{model_answer.replace('/', ' / ')})"
-
-# -------------------------------------------------------------
-# 🛡️ React DOMの崩壊を防ぐ完全固定UI構成
-# -------------------------------------------------------------
-st.markdown('<div class="game-title">⚔️ 歴史手書きクエスト ⚔️</div>', unsafe_allow_html=True)
+    st.session_state.canvas_reset_trigger += 1 # コンポーネントを安全にリセット
 
 # 1. ログイン情報管理 (サイドバーに常駐)
 st.sidebar.subheader("👤 プレイヤー情報")
@@ -462,12 +607,6 @@ st.markdown(f"""
     </div>
 """, unsafe_allow_html=True)
 
-# 🛡️ 現在の採点モードの通知
-if st.session_state.self_check_mode:
-    st.sidebar.info("💡 現在：自己採点モードで稼働中")
-else:
-    st.sidebar.success("🤖 現在：AI自動判定モードで稼働中")
-
 # 4. 問題カードの描画
 st.markdown(f"""
     <div class="quiz-card">
@@ -476,181 +615,87 @@ st.markdown(f"""
     </div>
 """, unsafe_allow_html=True)
 
-# 5. 操作方法ガイド (ゴミ箱ボタンの案内)
-st.markdown("""
-<div class="guide-box">
-    <b>✍️ キャンバスの操作方法:</b><br>
-    ・文字を書き直すときや次の問題に進むときは、黒いキャンバス of 座標の左下にある <b>ゴミ箱アイコン 🗑️</b> を押してクリアしてください。<br>
-    ・1つ前の状態に戻したいときは、<b>矢印アイコン ↩️</b> を押してください。
-</div>
-""", unsafe_allow_html=True)
+# 5. 手書きコンポーネントの配置（完全不変DOM ➔ 100%クラッシュフリー）
+st.write("✍️ 下の黒いキャンバスに、答えを漢字で書いて「判定する！」を押してください。")
 
-# 6. 手書きエリア (React DOM 崩壊防止のために columns やネストを完全撤廃しフラット配置)
-# 🛡️ 【絶対不変】React keyを完全に固定化し、プロパティ変更による iframe の React アンマウントを完全に回避。
-# クリア時は、100%安全に background_color をトグル(人間には見分けのつかない微小な色変化)させることで Fabric.js を内部クリアします。
-canvas_key = "immortal_canvas_fixed_key"
-canvas_bg_color = "#000000" if st.session_state.canvas_key_offset % 2 == 0 else "#000001"
+# 双方向通信手書きカスタムコンポーネントを実行！
+# ユーザーがHTML側で「判定する！」を押すと、認識結果の文字列がPython側に一瞬で入ります。
+recognized_text = handwriting_canvas(key=f"handwriting_canvas_trigger_v_{st.session_state.canvas_reset_trigger}")
 
-canvas_result = st_canvas(
-    fill_color="rgba(255, 255, 255, 0)",
-    stroke_width=6,
-    stroke_color="#FFFFFF",
-    background_color=canvas_bg_color,
-    height=180,
-    width=400,
-    drawing_mode="freedraw",
-    key=canvas_key,
-    update_streamlit=False, # 描画中の余計な裏リランを完全停止
-    display_toolbar=True, # ツールバーを確実に有効化
-)
+# 6. リアルタイム判定トリガー処理（Streamlit標準の安全同期処理）
+if recognized_text and not st.session_state.has_evaluated:
+    # 認識された文字列を検知
+    st.session_state.ocr_text = recognized_text
+    st.session_state.has_evaluated = True
+    st.session_state.answered_count += 1
+    
+    is_correct = judge_answer(recognized_text, model_answer)
+    
+    if is_correct:
+        st.session_state.result_status = "correct"
+        st.session_state.combo += 1
+        st.session_state.correct_count += 1
+        earned = 100 + (st.session_state.combo - 1) * 20
+        st.session_state.score += earned
+        st.session_state.earned_this_turn = earned
+        st.session_state.info_msg = f"🎯 正解！ 認識文字: {recognized_text} (+{earned} pts)"
+    else:
+        st.session_state.result_status = "incorrect"
+        st.session_state.combo = 0
+        st.session_state.earned_this_turn = 0
+        st.session_state.info_msg = f"❌ 不正解... 認識文字: {recognized_text} (正解：{model_answer.replace('/', ' / ')})"
+        
+    # 個人データの更新と保存
+    stats["total_questions"] += 1
+    if is_correct:
+        stats["correct_answers"] += 1
+    if st.session_state.score > stats["high_score"]:
+        stats["high_score"] = st.session_state.score
+    if st.session_state.combo > stats["max_combo"]:
+        stats["max_combo"] = st.session_state.combo
+    
+    save_user_stats(username, stats)
+    save_answer_log(username, q_id, question, model_answer, recognized_text, is_correct, st.session_state.earned_this_turn)
+    st.rerun()
 
-# 7. 判定ボタン
-submit_btn = st.button("🔥 判定する！", use_container_width=True, type="primary", disabled=st.session_state.has_evaluated)
-
-# 8. OCR判定または自己採点処理
-if submit_btn and not st.session_state.has_evaluated:
-    if canvas_result is not None and canvas_result.image_data is not None:
-        img_data = canvas_result.image_data
-        if np.sum(img_data[:, :, 3]) > 0:
-            st.session_state.info_msg = "解読中..."
-            
-            # --- 🤖 AI自動判定モード時の処理 ---
-            if not st.session_state.self_check_mode:
-                # ここで初めて安全にOCRモジュールをインポート・読み込み
-                reader_obj, is_ready = load_ocr_reader_safe()
-                if is_ready and reader_obj is not None:
-                    try:
-                        pil_img = Image.fromarray(img_data.astype('uint8'), 'RGBA')
-                        processed_img = preprocess_image(pil_img)
-                        
-                        img_np = np.array(processed_img)
-                        ocr_results = reader_obj.readtext(img_np)
-                        
-                        detected_text = ""
-                        if ocr_results:
-                            detected_text = "".join([res[1] for res in ocr_results]).strip()
-                        
-                        if not detected_text:
-                            detected_text = "（読み取り不可）"
-                        
-                        st.session_state.ocr_text = detected_text
-                        st.session_state.has_evaluated = True
-                        st.session_state.answered_count += 1
-                        
-                        is_correct = judge_answer(detected_text, model_answer)
-                        
-                        if is_correct:
-                            st.session_state.result_status = "correct"
-                            st.session_state.combo += 1
-                            st.session_state.correct_count += 1
-                            earned = 100 + (st.session_state.combo - 1) * 20
-                            st.session_state.score += earned
-                            st.session_state.earned_this_turn = earned
-                            st.session_state.info_msg = f"🎯 正解！ 認識した文字：{detected_text} (+{earned} pts) combo: {st.session_state.combo}"
-                        else:
-                            st.session_state.result_status = "incorrect"
-                            st.session_state.combo = 0
-                            st.session_state.earned_this_turn = 0
-                            st.session_state.info_msg = f"❌ 不正解... 認識した文字：{detected_text} (正解：{model_answer.replace('/', ' / ')})"
-                            
-                        # 個人データの累積更新と保存
-                        stats["total_questions"] += 1
-                        if is_correct:
-                            stats["correct_answers"] += 1
-                        if st.session_state.score > stats["high_score"]:
-                            stats["high_score"] = st.session_state.score
-                        if st.session_state.combo > stats["max_combo"]:
-                            stats["max_combo"] = st.session_state.combo
-                        
-                        save_user_stats(username, stats)
-                        save_answer_log(username, q_id, question, model_answer, detected_text, is_correct, st.session_state.earned_this_turn)
-                        
-                    except Exception as e:
-                        # OCR処理が万が一サーバー負荷で失敗した場合は、自動的に安全な自己判定モードへ切り替えます
-                        st.session_state.self_check_mode = True
-                        st.session_state.info_msg = "⚠️ AI判定がタイムアウトしました。自己採点モードに切り替えます。下の判定を選んでください。"
-                else:
-                    # ライブラリ不足、またはモデルの読み込みに失敗した場合は自己判定にスイッチ
-                    st.session_state.self_check_mode = True
-                    st.session_state.info_msg = "💡 サーバーのメモリ節約のため、自己採点モードで起動しました。下の判定を選んでください。"
-            
-            # --- 💡 自己採点モード時の処理（100%確実に稼働し、アプリを絶対に落とさない防壁設計） ---
-            if st.session_state.self_check_mode:
-                st.session_state.ocr_text = "（自己判定中）"
-                st.session_state.has_evaluated = True
-                st.session_state.info_msg = f"📝 あなたの書いた答えと、正解を比較してください。\\n正解：**{model_answer.replace('/', ' / ')}**"
-        else:
-            st.session_state.info_msg = "⚠️ キャンバスに何も書かれていません！"
-
-# 9. 判定結果の表示スロット
-# 🛡️ React DOMの崩壊を防ぐため、固定スロット `st.empty()` の中身を安全にHTMLで上書きして視覚演出を適用。
-# これなら、DOM要素の追加や削除を伴わないため、removeChildエラーは絶対に起きません。
+# 7. 判定結果の表示スロット (動的なHTML挿入でも、キャンバス自体が不変なので100%安全に稼働)
 st.markdown("---")
 result_placeholder = st.empty()
 
-if st.session_state.info_msg:
+if st.session_state.has_evaluated:
     if st.session_state.result_status == "correct":
-        # ✨ 正解時のプレミアム・ゴールドアニメーションエフェクト
+        # ✨ 正解時のゴールドアニメーション演出（DOM変化なしで安全）
         html_msg = f"""
         <div class="correct-effect-box">
             <h4 style="color: #4CAF50; margin: 0 0 0.5rem 0; font-weight: 800;">🎯 正解！</h4>
             <p style="margin: 0; color: #ffffff; font-size: 1.1rem; font-weight: bold;">
-                解読文字: <span style="color: #FFC107;">{st.session_state.ocr_text}</span> (+{st.session_state.get('earned_this_turn', 100)} pts)
+                書いた漢字: <span style="color: #FFC107;">{st.session_state.ocr_text}</span> (+{st.session_state.get('earned_this_turn', 100)} pts)
             </p>
             <div class="combo-badge" style="margin-top: 0.5rem;">🔥 {st.session_state.combo} COMBO !</div>
         </div>
         """
-    elif st.session_state.result_status == "incorrect":
+    else:
         # ❌ 不正解時のフェードインカード
         html_msg = f"""
         <div class="incorrect-effect-box">
             <h4 style="color: #F44336; margin: 0 0 0.5rem 0; font-weight: 800;">❌ 不正解...</h4>
             <p style="margin: 0 0 0.5rem 0; color: #ffffff; font-size: 1rem;">
-                認識文字: <span style="color: #ccc;">{st.session_state.ocr_text}</span>
+                認識された文字: <span style="color: #ccc;">{st.session_state.ocr_text}</span>
             </p>
             <p style="margin: 0; color: #FF9800; font-size: 1.05rem; font-weight: bold;">
                 正解: {model_answer.replace('/', ' / ')}
             </p>
         </div>
         """
-    else:
-        # その他お知らせ・警告・自己採点ガイダンス（静的カード）
-        html_msg = f"""
-        <div class="guide-box" style="border: 1px solid #FF9800; background-color: rgba(255, 152, 0, 0.05);">
-            <h4 style="color: #FF9800; margin: 0 0 0.5rem 0; font-weight: bold;">📝 自己判定ガイダンス</h4>
-            <p style="margin: 0; color: #ffffff; font-size: 1rem;">{st.session_state.info_msg}</p>
-        </div>
-        """
 else:
     html_msg = """
     <div class="guide-box" style="background-color: #1e1e24; border: 1px solid #3f3f52;">
         <h4 style="color: #ccc; margin: 0 0 0.5rem 0;">📋 判定結果待ち</h4>
-        <p style="margin: 0; color: #888; font-size: 0.95rem;">答えを手書きして、上の「🔥 判定する！」ボタンを押してください。</p>
+        <p style="margin: 0; color: #888; font-size: 0.95rem;">キャンバスに漢字を書き、左下の「🔥 判定する！」ボタンを押してください。</p>
     </div>
     """
 
 result_placeholder.markdown(html_msg, unsafe_allow_html=True)
 
-# 10. 🛡️ 自己判定モード時の「○ 正解」「× 不正解」入力ボタン（プレースホルダーと競合しない完全同期型設計）
-# 【絶対的安定】React DOM の崩壊を防ぐため、st.columns構造および自己判定ボタンは常にマウント。
-# 必要なタイミング以外ではdisabled=Trueに制御することで、動的なコンポーネント消滅によるremoveChildエラーを完全回避。
-is_self_eval_active = (st.session_state.self_check_mode and st.session_state.has_evaluated and st.session_state.result_status is None)
-
-col_self1, col_self2 = st.columns(2)
-with col_self1:
-    st.button(
-        "⭕ 合ってた！(正解として記録)", 
-        use_container_width=True, 
-        disabled=not is_self_eval_active, 
-        on_click=handle_self_correct
-    )
-with col_self2:
-    st.button(
-        "❌ 違ってた(不正解として記録)", 
-        use_container_width=True, 
-        disabled=not is_self_eval_active, 
-        on_click=handle_self_incorrect
-    )
-
-# 次の問題へ進むボタン (安全なコールバック経由)
+# 8. 次の問題へ進むボタン
 st.button("➡️ 次の問題へ進む", use_container_width=True, type="primary", disabled=not st.session_state.has_evaluated, on_click=handle_next_question)
