@@ -312,6 +312,10 @@ if "result_status" not in st.session_state:
     st.session_state.result_status = None
 if "ocr_text" not in st.session_state:
     st.session_state.ocr_text = ""
+if "show_empty_warning" not in st.session_state:
+    st.session_state.show_empty_warning = False
+if "error_message" not in st.session_state:
+    st.session_state.error_message = ""
 
 # --- ボタンクリックコールバック関数 (仮想DOM競合を避けるための100%安全設計) ---
 def handle_next_question():
@@ -319,6 +323,8 @@ def handle_next_question():
     st.session_state.has_evaluated = False
     st.session_state.result_status = None
     st.session_state.ocr_text = ""
+    st.session_state.show_empty_warning = False
+    st.session_state.error_message = ""
 
 # -------------------------------------------------------------
 # 🛡️ React DOMの崩壊を防ぐ完全固定UI構成
@@ -408,72 +414,102 @@ if submit_btn and not st.session_state.has_evaluated:
     if canvas_result is not None and canvas_result.image_data is not None:
         img_data = canvas_result.image_data
         if np.sum(img_data[:, :, 3]) > 0:
-            with st.spinner("AI採点中..."):
-                try:
-                    pil_img = Image.fromarray(img_data.astype('uint8'), 'RGBA')
-                    processed_img = preprocess_image(pil_img)
+            st.session_state.show_empty_warning = False
+            try:
+                pil_img = Image.fromarray(img_data.astype('uint8'), 'RGBA')
+                processed_img = preprocess_image(pil_img)
+                
+                img_np = np.array(processed_img)
+                ocr_results = reader.readtext(img_np)
+                
+                detected_text = ""
+                if ocr_results:
+                    detected_text = "".join([res[1] for res in ocr_results]).strip()
+                
+                if not detected_text:
+                    detected_text = "（読み取り不可）"
+                
+                st.session_state.ocr_text = detected_text
+                st.session_state.has_evaluated = True
+                st.session_state.answered_count += 1
+                
+                is_correct = judge_answer(detected_text, model_answer)
+                
+                if is_correct:
+                    st.session_state.result_status = "correct"
+                    st.session_state.combo += 1
+                    st.session_state.correct_count += 1
+                    earned = 100 + (st.session_state.combo - 1) * 20
+                    st.session_state.score += earned
+                    st.session_state.earned_this_turn = earned
+                else:
+                    st.session_state.result_status = "incorrect"
+                    st.session_state.combo = 0
+                    st.session_state.earned_this_turn = 0
                     
-                    img_np = np.array(processed_img)
-                    ocr_results = reader.readtext(img_np)
-                    
-                    detected_text = ""
-                    if ocr_results:
-                        detected_text = "".join([res[1] for res in ocr_results]).strip()
-                    
-                    if not detected_text:
-                        detected_text = "（読み取り不可）"
-                    
-                    st.session_state.ocr_text = detected_text
-                    st.session_state.has_evaluated = True
-                    st.session_state.answered_count += 1
-                    
-                    is_correct = judge_answer(detected_text, model_answer)
-                    
-                    if is_correct:
-                        st.session_state.result_status = "correct"
-                        st.session_state.combo += 1
-                        st.session_state.correct_count += 1
-                        earned = 100 + (st.session_state.combo - 1) * 20
-                        st.session_state.score += earned
-                        st.session_state.earned_this_turn = earned
-                    else:
-                        st.session_state.result_status = "incorrect"
-                        st.session_state.combo = 0
-                        st.session_state.earned_this_turn = 0
-                        
-                    # 個人データの累積更新と保存
-                    stats["total_questions"] += 1
-                    if is_correct:
-                        stats["correct_answers"] += 1
-                    if st.session_state.score > stats["high_score"]:
-                        stats["high_score"] = st.session_state.score
-                    if st.session_state.combo > stats["max_combo"]:
-                        stats["max_combo"] = st.session_state.combo
-                    
-                    save_user_stats(username, stats)
-                    save_answer_log(username, q_id, question, model_answer, detected_text, is_correct, st.session_state.earned_this_turn)
-                    
-                    # ⚠️ 二重競合の原因だった st.rerun() を完全に排除し、安全に描画を完了させます
-                except Exception as e:
-                    st.error(f"判定中にエラーが発生しました: {e}")
+                # 個人データの累積更新と保存
+                stats["total_questions"] += 1
+                if is_correct:
+                    stats["correct_answers"] += 1
+                if st.session_state.score > stats["high_score"]:
+                    stats["high_score"] = st.session_state.score
+                if st.session_state.combo > stats["max_combo"]:
+                    stats["max_combo"] = st.session_state.combo
+                
+                save_user_stats(username, stats)
+                save_answer_log(username, q_id, question, model_answer, detected_text, is_correct, st.session_state.earned_this_turn)
+                
+            except Exception as e:
+                st.session_state.error_message = f"判定中にエラーが発生しました: {e}"
         else:
-            st.warning("⚠️ キャンバスに何も書かれていません！")
+            st.session_state.show_empty_warning = True
 
 # 9. 判定結果の表示スロット
+# 🛡️ React DOMの崩壊を防ぐため、st.successやst.errorを直接出さず、
+# 100%静的な単一の st.markdown 内でHTMLを流し込むだけの構造に刷新。
 st.markdown("---")
-result_title_slot = st.empty()
-result_detail_slot = st.empty()
 
-if st.session_state.has_evaluated:
+if st.session_state.get("error_message", ""):
+    html_content = f"""
+    <div style="background-color: rgba(244, 67, 54, 0.15); border: 1px solid #F44336; border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
+        <h4 style="color: #F44336; margin: 0 0 0.5rem 0;">⚠️ システムエラー</h4>
+        <p style="margin: 0; color: #ffffff; font-size: 1rem;">{st.session_state.error_message}</p>
+    </div>
+    """
+elif st.session_state.has_evaluated:
     if st.session_state.result_status == "correct":
-        result_title_slot.success(f"🎯 **正解！** 手書き認識: 「{st.session_state.ocr_text}」 (+{st.session_state.earned_this_turn} pts)")
-        result_detail_slot.markdown(f'<div class="combo-badge">🔥 {st.session_state.combo} COMBO !</div>', unsafe_allow_html=True)
+        html_content = f"""
+        <div style="background-color: rgba(76, 175, 80, 0.15); border: 1px solid #4CAF50; border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
+            <h4 style="color: #4CAF50; margin: 0 0 0.5rem 0;">🎯 正解！</h4>
+            <p style="margin: 0; color: #ffffff; font-size: 1rem;">手書き認識: <b>{st.session_state.ocr_text}</b> (+{st.session_state.earned_this_turn} pts)</p>
+            <div class="combo-badge">🔥 {st.session_state.combo} COMBO !</div>
+        </div>
+        """
     else:
-        result_title_slot.error(f"❌ **不正解** 手書き認識: 「{st.session_state.ocr_text}」")
-        result_detail_slot.info(f"正解は **{model_answer.replace('/', ' / ')}** でした。")
+        html_content = f"""
+        <div style="background-color: rgba(244, 67, 54, 0.15); border: 1px solid #F44336; border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
+            <h4 style="color: #F44336; margin: 0 0 0.5rem 0;">❌ 不正解</h4>
+            <p style="margin: 0 0 0.5rem 0; color: #ffffff; font-size: 1rem;">手書き認識: <b>{st.session_state.ocr_text}</b></p>
+            <p style="margin: 0; color: #FFC107; font-size: 1rem;">正解は <b>{model_answer.replace('/', ' / ')}</b> でした。</p>
+        </div>
+        """
+elif st.session_state.show_empty_warning:
+    html_content = """
+    <div style="background-color: rgba(255, 152, 0, 0.15); border: 1px solid #FF9800; border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
+        <h4 style="color: #FF9800; margin: 0 0 0.5rem 0;">⚠️ 警告</h4>
+        <p style="margin: 0; color: #ffffff; font-size: 1rem;">キャンバスに何も書かれていません！何か書いてから判定してください。</p>
+    </div>
+    """
 else:
-    result_title_slot.info("📋 判定結果：答えを手書きして、上の「🔥判定する！」ボタンを押してください。")
-    result_detail_slot.write("ここに正しい判定結果とコンボ数が表示されます。")
+    html_content = """
+    <div style="background-color: #1e1e24; border: 1px solid #3f3f52; border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
+        <h4 style="color: #FF9800; margin: 0 0 0.5rem 0;">📋 判定結果待ち</h4>
+        <p style="margin: 0; color: #ccc; font-size: 0.95rem;">答えを手書きして、上の「🔥 判定する！」ボタンを押してください。</p>
+    </div>
+    """
+
+# 表示
+st.markdown(html_content, unsafe_allow_html=True)
 
 # 次の問題へ進むボタン (安全なコールバック経由)
 st.button("➡️ 次の問題へ進む", use_container_width=True, type="primary", disabled=not st.session_state.has_evaluated, on_click=handle_next_question)
