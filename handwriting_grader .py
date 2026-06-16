@@ -325,6 +325,18 @@ if "canvas_key_offset" not in st.session_state:
 if "self_check_mode" not in st.session_state:
     st.session_state.self_check_mode = False
 
+# 安全なローカル変数定義
+q_idx = st.session_state.current_q_idx
+if len(df_questions) > 0:
+    row = df_questions.iloc[q_idx]
+    q_id = row["q_id"]
+    question = row["question"]
+    model_answer = row["answer"]
+else:
+    q_id = "q0000"
+    question = "問題データがありません。"
+    model_answer = ""
+
 # --- ボタンクリックコールバック関数 (仮想DOM競合を避けるための100%安全設計) ---
 def handle_clear():
     st.session_state.canvas_key_offset += 1
@@ -340,6 +352,43 @@ def handle_next_question():
     st.session_state.ocr_text = ""
     st.session_state.info_msg = ""
     st.session_state.canvas_key_offset += 1
+
+def handle_self_correct():
+    st.session_state.result_status = "correct"
+    st.session_state.combo += 1
+    st.session_state.correct_count += 1
+    st.session_state.answered_count += 1
+    earned = 100 + (st.session_state.combo - 1) * 20
+    st.session_state.score += earned
+    st.session_state.earned_this_turn = earned
+    
+    username = st.session_state.username
+    stats = st.session_state.user_stats
+    stats["total_questions"] += 1
+    stats["correct_answers"] += 1
+    if st.session_state.score > stats["high_score"]:
+        stats["high_score"] = st.session_state.score
+    if stats["high_score"] > 0:
+        pass
+    if st.session_state.combo > stats["max_combo"]:
+        stats["max_combo"] = st.session_state.combo
+    
+    save_user_stats(username, stats)
+    save_answer_log(username, q_id, question, model_answer, "⭕(自己判定・正解)", True, earned)
+    st.session_state.info_msg = f"🎯 正解にしました！ (+{earned} pts) combo: {st.session_state.combo}"
+
+def handle_self_incorrect():
+    st.session_state.result_status = "incorrect"
+    st.session_state.combo = 0
+    st.session_state.earned_this_turn = 0
+    st.session_state.answered_count += 1
+    
+    username = st.session_state.username
+    stats = st.session_state.user_stats
+    stats["total_questions"] += 1
+    save_user_stats(username, stats)
+    save_answer_log(username, q_id, question, model_answer, "❌(自己判定・不正解)", False, 0)
+    st.session_state.info_msg = f"❌ 不正解として記録しました。(正解：{model_answer.replace('/', ' / ')})"
 
 # -------------------------------------------------------------
 # 🛡️ React DOMの崩壊を防ぐ完全固定UI構成
@@ -385,17 +434,6 @@ else:
     st.sidebar.success("🤖 現在：AI自動判定モードで稼働中")
 
 # 4. 問題カードの描画
-if len(df_questions) > 0:
-    q_idx = st.session_state.current_q_idx
-    row = df_questions.iloc[q_idx]
-    q_id = row["q_id"]
-    question = row["question"]
-    model_answer = row["answer"]
-else:
-    q_id = "q0000"
-    question = "問題データがありません。"
-    model_answer = ""
-
 st.markdown(f"""
     <div class="quiz-card">
         <div class="quiz-num">問題 ID: {q_id}</div>
@@ -510,6 +548,7 @@ if submit_btn and not st.session_state.has_evaluated:
 st.markdown("---")
 result_placeholder = st.empty()
 
+# 判定結果を表示用のテキスト文字列としてシンプルに作成
 if st.session_state.info_msg:
     result_text = st.session_state.info_msg
 else:
@@ -517,42 +556,26 @@ else:
 
 result_placeholder.write(result_text)
 
-# 10. 自己判定モード時の「○ 正解」「× 不正解」入力ボタン（プレースホルダーと競合しない完全同期型設計）
-if st.session_state.self_check_mode and st.session_state.has_evaluated and st.session_state.result_status is None:
-    col_self1, col_self2 = st.columns(2)
-    with col_self1:
-        if st.button("⭕ 合ってた！(正解として記録)", use_container_width=True):
-            st.session_state.result_status = "correct"
-            st.session_state.combo += 1
-            st.session_state.correct_count += 1
-            st.session_state.answered_count += 1
-            earned = 100 + (st.session_state.combo - 1) * 20
-            st.session_state.score += earned
-            st.session_state.earned_this_turn = earned
-            
-            stats["total_questions"] += 1
-            stats["correct_answers"] += 1
-            if st.session_state.score > stats["high_score"]:
-                stats["high_score"] = st.session_state.score
-            if st.session_state.combo > stats["max_combo"]:
-                stats["max_combo"] = st.session_state.combo
-            save_user_stats(username, stats)
-            save_answer_log(username, q_id, question, model_answer, "⭕(自己判定・正解)", True, earned)
-            st.session_state.info_msg = f"🎯 正解にしました！ (+{earned} pts) combo: {st.session_state.combo}"
-            st.rerun()
-            
-    with col_self2:
-        if st.button("❌ 違ってた(不正解として記録)", use_container_width=True):
-            st.session_state.result_status = "incorrect"
-            st.session_state.combo = 0
-            st.session_state.earned_this_turn = 0
-            st.session_state.answered_count += 1
-            
-            stats["total_questions"] += 1
-            save_user_stats(username, stats)
-            save_answer_log(username, q_id, question, model_answer, "❌(自己判定・不正解)", False, 0)
-            st.session_state.info_msg = f"❌ 不正解として記録しました。(正解：{model_answer.replace('/', ' / ')})"
-            st.rerun()
+# 10. 🛡️ 自己判定モード時の「○ 正解」「× 不正解」入力ボタン（プレースホルダーと競合しない完全同期型設計）
+# 【絶対的安定】React DOM の崩壊を防ぐため、st.columns構造および自己判定ボタンは常にマウント。
+# 必要なタイミング以外ではdisabled=Trueに制御することで、動的なコンポーネント消滅によるremoveChildエラーを完全回避。
+is_self_eval_active = (st.session_state.self_check_mode and st.session_state.has_evaluated and st.session_state.result_status is None)
+
+col_self1, col_self2 = st.columns(2)
+with col_self1:
+    st.button(
+        "⭕ 合ってた！(正解として記録)", 
+        use_container_width=True, 
+        disabled=not is_self_eval_active, 
+        on_click=handle_self_correct
+    )
+with col_self2:
+    st.button(
+        "❌ 違ってた(不正解として記録)", 
+        use_container_width=True, 
+        disabled=not is_self_eval_active, 
+        on_click=handle_self_incorrect
+    )
 
 # 次の問題へ進むボタン (安全なコールバック経由)
 st.button("➡️ 次の問題へ進む", use_container_width=True, type="primary", disabled=not st.session_state.has_evaluated, on_click=handle_next_question)
