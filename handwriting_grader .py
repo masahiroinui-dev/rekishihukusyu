@@ -20,8 +20,11 @@ def safe_rerun():
     else:
         st.experimental_rerun()
 
-# --- 効果音再生用ヘルパー (Web Audio API を使って合成音を発生させる) ---
+# --- 効果音再生用ヘルパー (Web Audio API / React DOM クラッシュ保護対策版) ---
 def play_sound(sound_type):
+    # ユニークなキーを付与することで、Reactが古いiframeを再利用しようとして起こるremoveChildエラーを防御します
+    sound_key = f"sound_{sound_type}_{st.session_state.get('canvas_key', 0)}_{datetime.now().microsecond}"
+    
     if sound_type == "correct":
         # ピコーンと高めの良い音
         js_code = """
@@ -29,7 +32,6 @@ def play_sound(sound_type):
         try {
             var ctx = new (window.AudioContext || window.webkitAudioContext)();
             var osc1 = ctx.createOscillator();
-            var osc2 = ctx.createOscillator();
             var gain = ctx.createGain();
             
             osc1.type = 'sine';
@@ -37,8 +39,8 @@ def play_sound(sound_type):
             osc1.frequency.setValueAtTime(659.25, ctx.currentTime + 0.1); // E5
             osc1.frequency.setValueAtTime(783.99, ctx.currentTime + 0.2); // G5
             
-            gain.gain.setValueAtTime(0.1, ctx.currentTime);
-            gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
+            gain.gain.setValueAtTime(0.08, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
             
             osc1.connect(gain);
             gain.connect(ctx.destination);
@@ -60,8 +62,8 @@ def play_sound(sound_type):
             osc.frequency.setValueAtTime(150, ctx.currentTime);
             osc.frequency.linearRampToValueAtTime(100, ctx.currentTime + 0.3);
             
-            gain.gain.setValueAtTime(0.1, ctx.currentTime);
-            gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
+            gain.gain.setValueAtTime(0.08, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
             
             osc.connect(gain);
             gain.connect(ctx.destination);
@@ -84,8 +86,8 @@ def play_sound(sound_type):
             osc.frequency.setValueAtTime(180, ctx.currentTime + 0.3);
             osc.frequency.setValueAtTime(120, ctx.currentTime + 0.45);
             
-            gain.gain.setValueAtTime(0.15, ctx.currentTime);
-            gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.8);
+            gain.gain.setValueAtTime(0.12, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.8);
             
             osc.connect(gain);
             gain.connect(ctx.destination);
@@ -101,8 +103,8 @@ def play_sound(sound_type):
         try {
             var ctx = new (window.AudioContext || window.webkitAudioContext)();
             var gain = ctx.createGain();
-            gain.gain.setValueAtTime(0.1, ctx.currentTime);
-            gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 1.2);
+            gain.gain.setValueAtTime(0.08, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.2);
             gain.connect(ctx.destination);
             
             function playTone(freq, start, duration) {
@@ -122,7 +124,9 @@ def play_sound(sound_type):
         """
     else:
         return
-    st.components.v1.html(js_code, height=0, width=0)
+    
+    # keyを指定することでReact DOMツリーにおける競合や重複削除の競合を完全に防ぎます
+    st.components.v1.html(js_code, height=0, width=0, scrolling=False, key=sound_key)
 
 # --- CSS: ゲーミフィケーションデザイン ---
 st.markdown("""
@@ -252,7 +256,6 @@ if not os.path.exists(LOG_DIR):
 @st.cache_resource
 def load_ocr_reader():
     import easyocr
-    # 日本語('ja')と英語('en')をサポート
     return easyocr.Reader(['ja', 'en'], gpu=False)
 
 try:
@@ -278,11 +281,9 @@ def load_questions(filepath):
         return create_fallback_data()
     
     try:
-        # UTF-8-sig (Excel対策), UTF-8, Shift-JIS などの複数エンコーディングに安全に対応
         df = None
         for encoding_type in ["utf-8-sig", "utf-8", "shift-jis", "cp932", "latin1"]:
             try:
-                # header=None にして、1行目(q0001)が列名に潰されないよう確実に読み込む
                 df = pd.read_csv(filepath, header=None, encoding=encoding_type)
                 break
             except Exception:
@@ -291,7 +292,6 @@ def load_questions(filepath):
         if df is None or df.empty:
             raise ValueError("CSVデータのパースに失敗、または空のファイルです。")
             
-        # 余分な余白列などがあっても最初の3列のみにスライスし、強制的に命名
         df = df.iloc[:, :3]
         df.columns = ["q_id", "question", "answer"]
         
@@ -307,7 +307,6 @@ def load_questions(filepath):
         df["q_num"] = df["q_id"].apply(get_qid_num)
         filtered_df = df[(df["q_num"] >= 187) & (df["q_num"] <= 361)].copy()
         
-        # 補助用の列を削除
         filtered_df = filtered_df.drop(columns=["q_num"])
         
         if len(filtered_df) == 0:
@@ -335,7 +334,6 @@ def load_user_stats(username):
                 return df.iloc[0].to_dict()
         except:
             pass
-    # 初期値
     return {
         "username": username,
         "high_score": 0,
@@ -442,7 +440,6 @@ def init_game_state():
     st.session_state.answered_count = 0
     st.session_state.correct_count = 0
     
-    # 問題データ数が 10 未満のときのための安全なサンプリング
     num_questions = len(df_questions)
     sample_size = min(10, num_questions)
     
@@ -585,7 +582,6 @@ if len(q_list) == 0 or current_pos >= len(q_list) or st.session_state.lives <= 0
     play_sound("clear")
     safe_rerun()
 else:
-    # 完全に条件がクリアされたときのみ配列の要素にアクセスするため、IndexError は絶対に起きない
     current_q_idx = q_list[current_pos]
     quiz_row = df_questions.iloc[current_q_idx]
     q_id = quiz_row["q_id"]
@@ -649,7 +645,6 @@ else:
     if submit_btn:
         if canvas_result is not None and canvas_result.image_data is not None:
             img_data = canvas_result.image_data
-            # 透明なだけか（全く書いてないか）の簡易判定
             if np.sum(img_data[:, :, 3]) > 0:
                 with st.spinner("手書き文字をAIが解読中..."):
                     try:
@@ -679,6 +674,7 @@ else:
                             earned = 100 + (st.session_state.combo - 1) * 20
                             st.session_state.score += earned
                             st.session_state.earned_this_turn = earned
+                            # 状態更新を終えてから効果音を鳴らす
                             play_sound("correct")
                         else:
                             st.session_state.result_status = "incorrect"
