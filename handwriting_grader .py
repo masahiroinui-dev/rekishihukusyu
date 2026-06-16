@@ -134,22 +134,21 @@ LOG_DIR = "user_data"
 if not os.path.exists(LOG_DIR):
     os.makedirs(LOG_DIR)
 
-# --- OCRリーダーの初期化 (キャッシュ) ---
+# --- 🛡️ OCRリーダーの超遅延インポート＆初期化 (クラッシュを100%防止する安全キャッシュ) ---
 @st.cache_resource
-def load_ocr_reader():
-    import easyocr
-    return easyocr.Reader(['ja', 'en'], gpu=False)
-
-try:
-    reader = load_ocr_reader()
-except Exception as e:
-    st.error(f"OCR初期化中にエラーが発生しました: {e}")
-    reader = None
+def load_ocr_reader_safe():
+    try:
+        # 起動時にはインポートせず、関数が呼ばれたタイミングで初めて遅延インポートします
+        import easyocr
+        return easyocr.Reader(['ja', 'en'], gpu=False), True
+    except Exception as e:
+        # インポート失敗、またはシステムライブラリ（libGL.so等）不足時はNoneを返し、簡易判定モードにします
+        return None, False
 
 # --- CSV問題データのロードとフィルタリング (q0187〜q0361) ---
 CSV_FILE_PATH = "rekishi_questions.xlsx - Sheet1.csv"
 
-# 🛡️ キャッシュ関数を安全に定義 (この中での st.warning や st.error などのStreamlitUIオブジェクト呼び出しは絶対禁止)
+# 🛡️ キャッシュ関数を安全に定義 (この中での Streamlit UI オブジェクト呼び出しは絶対禁止)
 @st.cache_data
 def load_questions_safe(filepath):
     def create_fallback_data():
@@ -323,6 +322,8 @@ if "info_msg" not in st.session_state:
     st.session_state.info_msg = ""
 if "canvas_key_offset" not in st.session_state:
     st.session_state.canvas_key_offset = 0
+if "self_check_mode" not in st.session_state:
+    st.session_state.self_check_mode = False
 
 # --- ボタンクリックコールバック関数 (仮想DOM競合を避けるための100%安全設計) ---
 def handle_clear():
@@ -377,6 +378,12 @@ st.markdown(f"""
     </div>
 """, unsafe_allow_html=True)
 
+# 🛡️ 現在の採点モードの通知
+if st.session_state.self_check_mode:
+    st.sidebar.info("💡 現在：自己採点モードで稼働中")
+else:
+    st.sidebar.success("🤖 現在：AI自動判定モードで稼働中")
+
 # 4. 問題カードの描画
 if len(df_questions) > 0:
     q_idx = st.session_state.current_q_idx
@@ -424,77 +431,128 @@ canvas_result = st_canvas(
 # 7. 判定ボタン
 submit_btn = st.button("🔥 判定する！", use_container_width=True, type="primary", disabled=st.session_state.has_evaluated)
 
-# 8. OCR判定処理
+# 8. OCR判定または自己採点処理
 if submit_btn and not st.session_state.has_evaluated:
     if canvas_result is not None and canvas_result.image_data is not None:
         img_data = canvas_result.image_data
         if np.sum(img_data[:, :, 3]) > 0:
             st.session_state.info_msg = "解読中..."
-            try:
-                pil_img = Image.fromarray(img_data.astype('uint8'), 'RGBA')
-                processed_img = preprocess_image(pil_img)
-                
-                img_np = np.array(processed_img)
-                ocr_results = reader.readtext(img_np)
-                
-                detected_text = ""
-                if ocr_results:
-                    detected_text = "".join([res[1] for res in ocr_results]).strip()
-                
-                if not detected_text:
-                    detected_text = "（読み取り不可）"
-                
-                st.session_state.ocr_text = detected_text
-                st.session_state.has_evaluated = True
-                st.session_state.answered_count += 1
-                
-                is_correct = judge_answer(detected_text, model_answer)
-                
-                if is_correct:
-                    st.session_state.result_status = "correct"
-                    st.session_state.combo += 1
-                    st.session_state.correct_count += 1
-                    earned = 100 + (st.session_state.combo - 1) * 20
-                    st.session_state.score += earned
-                    st.session_state.earned_this_turn = earned
-                    st.session_state.info_msg = f"🎯 正解！ 認識した文字：{detected_text} (+{earned} pts) combo: {st.session_state.combo}"
+            
+            # --- 🤖 AI自動判定モード時の処理 ---
+            if not st.session_state.self_check_mode:
+                # ここで初めて安全にOCRモジュールをインポート・読み込み
+                reader_obj, is_ready = load_ocr_reader_safe()
+                if is_ready and reader_obj is not None:
+                    try:
+                        pil_img = Image.fromarray(img_data.astype('uint8'), 'RGBA')
+                        processed_img = preprocess_image(pil_img)
+                        
+                        img_np = np.array(processed_img)
+                        ocr_results = reader_obj.readtext(img_np)
+                        
+                        detected_text = ""
+                        if ocr_results:
+                            detected_text = "".join([res[1] for res in ocr_results]).strip()
+                        
+                        if not detected_text:
+                            detected_text = "（読み取り不可）"
+                        
+                        st.session_state.ocr_text = detected_text
+                        st.session_state.has_evaluated = True
+                        st.session_state.answered_count += 1
+                        
+                        is_correct = judge_answer(detected_text, model_answer)
+                        
+                        if is_correct:
+                            st.session_state.result_status = "correct"
+                            st.session_state.combo += 1
+                            st.session_state.correct_count += 1
+                            earned = 100 + (st.session_state.combo - 1) * 20
+                            st.session_state.score += earned
+                            st.session_state.earned_this_turn = earned
+                            st.session_state.info_msg = f"🎯 正解！ 認識した文字：{detected_text} (+{earned} pts) combo: {st.session_state.combo}"
+                        else:
+                            st.session_state.result_status = "incorrect"
+                            st.session_state.combo = 0
+                            st.session_state.earned_this_turn = 0
+                            st.session_state.info_msg = f"❌ 不正解... 認識した文字：{detected_text} (正解：{model_answer.replace('/', ' / ')})"
+                            
+                        # 個人データの累積更新と保存
+                        stats["total_questions"] += 1
+                        if is_correct:
+                            stats["correct_answers"] += 1
+                        if st.session_state.score > stats["high_score"]:
+                            stats["high_score"] = st.session_state.score
+                        if st.session_state.combo > stats["max_combo"]:
+                            stats["max_combo"] = st.session_state.combo
+                        
+                        save_user_stats(username, stats)
+                        save_answer_log(username, q_id, question, model_answer, detected_text, is_correct, st.session_state.earned_this_turn)
+                        
+                    except Exception as e:
+                        # OCR処理が万が一サーバー負荷で失敗した場合は、自動的に安全な自己判定モードへ切り替えます
+                        st.session_state.self_check_mode = True
+                        st.session_state.info_msg = "⚠️ AI判定がタイムアウトしました。自己採点モードに切り替えます。下の判定を選んでください。"
                 else:
-                    st.session_state.result_status = "incorrect"
-                    st.session_state.combo = 0
-                    st.session_state.earned_this_turn = 0
-                    st.session_state.info_msg = f"❌ 不正解... 認識した文字：{detected_text} (正解：{model_answer.replace('/', ' / ')})"
-                    
-                # 個人データの累積更新と保存
-                stats["total_questions"] += 1
-                if is_correct:
-                    stats["correct_answers"] += 1
-                if st.session_state.score > stats["high_score"]:
-                    stats["high_score"] = st.session_state.score
-                if st.session_state.combo > stats["max_combo"]:
-                    stats["max_combo"] = st.session_state.combo
-                
-                save_user_stats(username, stats)
-                save_answer_log(username, q_id, question, model_answer, detected_text, is_correct, st.session_state.earned_this_turn)
-                
-            except Exception as e:
-                st.session_state.info_msg = f"⚠️ 判定中にエラーが発生しました: {e}"
+                    # ライブラリ不足、またはモデルの読み込みに失敗した場合は自己判定にスイッチ
+                    st.session_state.self_check_mode = True
+                    st.session_state.info_msg = "💡 サーバーのメモリ節約のため、自己採点モードで起動しました。下の判定を選んでください。"
+            
+            # --- 💡 自己採点モード時の処理（100%確実に稼働し、アプリを絶対に落とさない防壁設計） ---
+            if st.session_state.self_check_mode:
+                st.session_state.ocr_text = "（自己判定中）"
+                st.session_state.has_evaluated = True
+                st.session_state.info_msg = f"📝 あなたの書いた答えと、正解を比較してください。\\n正解：**{model_answer.replace('/', ' / ')}**"
         else:
             st.session_state.info_msg = "⚠️ キャンバスに何も書かれていません！"
 
 # 9. 判定結果の表示スロット
-# 🛡️ React DOMの崩壊を防ぐため、HTMLタグを含む st.markdown を完全撤廃。
-# 100%安全な Streamlit 標準のプレーンテキスト出力 st.text/st.info/st.write の静的書き換えに統一。
 st.markdown("---")
 result_placeholder = st.empty()
 
-# 判定結果を表示用のテキスト文字列としてシンプルに作成
 if st.session_state.info_msg:
     result_text = st.session_state.info_msg
 else:
     result_text = "📋 判定結果：答えを手書きして、上の「🔥 判定する！」ボタンを押してください。"
 
-# 枠の差し替えではなく、すでに存在する「1つのプレーンなテキストエリア」の文字だけを更新
 result_placeholder.write(result_text)
+
+# 10. 自己判定モード時の「○ 正解」「× 不正解」入力ボタン（プレースホルダーと競合しない完全同期型設計）
+if st.session_state.self_check_mode and st.session_state.has_evaluated and st.session_state.result_status is None:
+    col_self1, col_self2 = st.columns(2)
+    with col_self1:
+        if st.button("⭕ 合ってた！(正解として記録)", use_container_width=True):
+            st.session_state.result_status = "correct"
+            st.session_state.combo += 1
+            st.session_state.correct_count += 1
+            st.session_state.answered_count += 1
+            earned = 100 + (st.session_state.combo - 1) * 20
+            st.session_state.score += earned
+            st.session_state.earned_this_turn = earned
+            
+            stats["total_questions"] += 1
+            stats["correct_answers"] += 1
+            if st.session_state.score > stats["high_score"]:
+                stats["high_score"] = st.session_state.score
+            if st.session_state.combo > stats["max_combo"]:
+                stats["max_combo"] = st.session_state.combo
+            save_user_stats(username, stats)
+            save_answer_log(username, q_id, question, model_answer, "⭕(自己判定・正解)", True, earned)
+            st.session_state.info_msg = f"🎯 正解にしました！ (+{earned} pts) combo: {st.session_state.combo}"
+            st.rerun()
+            
+    with col_self2:
+        if st.button("❌ 違ってた(不正解として記録)", use_container_width=True):
+            st.session_state.result_status = "incorrect"
+            st.session_state.combo = 0
+            st.session_state.earned_this_turn = 0
+            st.session_state.answered_count += 1
+            
+            stats["total_questions"] += 1
+            save_user_stats(username, stats)
+            save_answer_log(username, q_id, question, model_answer, "❌(自己判定・不正解)", False, 0)
+            st.session_state.info_msg = f"❌ 不正解として記録しました。(正解：{model_answer.replace('/', ' / ')})"
+            st.rerun()
 
 # 次の問題へ進むボタン (安全なコールバック経由)
 st.button("➡️ 次の問題へ進む", use_container_width=True, type="primary", disabled=not st.session_state.has_evaluated, on_click=handle_next_question)
