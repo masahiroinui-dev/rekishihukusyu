@@ -156,7 +156,8 @@ def load_questions_safe(filepath):
         dummy_data = []
         for i in range(187, 362):
             dummy_data.append([f"q{i:04d}", f"【テスト問題 {i}】織田信長が明智光秀に襲われた京都のお寺はどこか？(答え:本能寺)", "本能寺"])
-        return pd.DataFrame(dummy_data, columns=["q_id", "question", "answer"]), False # (データ, 読み込み成否)
+        df_fallback = pd.DataFrame(dummy_data, columns=["q_id", "question", "answer"])
+        return df_fallback, False # (データ, 読み込み成否)
 
     if not os.path.exists(filepath):
         return create_fallback_data()
@@ -399,7 +400,7 @@ st.markdown(f"""
 st.markdown("""
 <div class="guide-box">
     <b>✍️ キャンバスの操作方法:</b><br>
-    ・文字を書き直すときや次の問題に進むときは、黒いキャンバスの左下にある <b>ゴミ箱アイコン 🗑️</b> を押してクリアしてください。<br>
+    ・文字を書き直すときや次の問題に進むときは、黒いキャンバス of 座標の左下にある <b>ゴミ箱アイコン 🗑️</b> を押してクリアしてください。<br>
     ・1つ前の状態に戻したいときは、<b>矢印アイコン ↩️</b> を押してください。
 </div>
 """, unsafe_allow_html=True)
