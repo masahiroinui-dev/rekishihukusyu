@@ -291,6 +291,20 @@ if "ocr_text" not in st.session_state:
 if "canvas_key_offset" not in st.session_state:
     st.session_state.canvas_key_offset = 0
 
+# --- ボタンクリックコールバック関数 (仮想DOM競合を避けるための設計) ---
+def handle_clear():
+    st.session_state.canvas_key_offset += 1
+    st.session_state.has_evaluated = False
+    st.session_state.result_status = None
+    st.session_state.ocr_text = ""
+
+def handle_next_question():
+    st.session_state.current_q_idx = random.randint(0, len(df_questions) - 1) if len(df_questions) > 0 else 0
+    st.session_state.has_evaluated = False
+    st.session_state.result_status = None
+    st.session_state.ocr_text = ""
+    st.session_state.canvas_key_offset += 1
+
 # -------------------------------------------------------------
 # 🛡️ React DOMの崩壊を防ぐ完全固定UI構成
 # -------------------------------------------------------------
@@ -352,7 +366,7 @@ col_canvas, col_control = st.columns([2, 1])
 
 with col_canvas:
     st.write("✍️ 下の黒いキャンバスに、答えを漢字（または指定の文字）で書いてください。")
-    canvas_key = f"canvas_{q_id}_offset_{st.session_state.canvas_key_offset}"
+    canvas_key = f"canvas_stable_slot_v{st.session_state.canvas_key_offset}"
     canvas_result = st_canvas(
         fill_color="rgba(255, 255, 255, 0)",
         stroke_width=6,
@@ -369,11 +383,8 @@ with col_control:
     st.markdown("<br><br>", unsafe_allow_html=True)
     submit_btn = st.button("🔥 判定する！", use_container_width=True, type="primary", disabled=st.session_state.has_evaluated)
     
-    if st.button("🧹 クリア", use_container_width=True):
-        st.session_state.canvas_key_offset += 1
-        st.session_state.has_evaluated = False
-        st.session_state.result_status = None
-        st.rerun()
+    # クリアボタンはコールバック経由で安全に実行
+    st.button("🧹 クリア", use_container_width=True, on_click=handle_clear)
 
 # 6. OCR判定処理
 if submit_btn and not st.session_state.has_evaluated:
@@ -449,11 +460,5 @@ else:
     result_detail_slot.write("ここに正しい判定結果とコンボ数が表示されます。")
 
 # 「➡️ 次の問題へ進む」ボタンは常に同じ場所に表示しておき、判定前はクリック不可（disabled）にします
-next_btn = st.button("➡️ 次の問題へ進む", use_container_width=True, type="primary", disabled=not st.session_state.has_evaluated)
-
-if next_btn:
-    st.session_state.current_q_idx = random.randint(0, len(df_questions) - 1) if len(df_questions) > 0 else 0
-    st.session_state.has_evaluated = False
-    st.session_state.result_status = None
-    st.session_state.canvas_key_offset = 0
-    st.rerun()
+# コールバック (handle_next_question) 経由で実行することで、安全かつ迅速なDOM更新を保証します
+st.button("➡️ 次の問題へ進む", use_container_width=True, type="primary", disabled=not st.session_state.has_evaluated, on_click=handle_next_question)
