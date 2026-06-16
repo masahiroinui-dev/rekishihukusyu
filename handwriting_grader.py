@@ -37,10 +37,6 @@ st.markdown("""
     
     /* Alertやウィジェット間の余白を削減 */
     .stAlert { padding: 0.3rem 0.5rem !important; margin-bottom: 0.3rem !important; }
-    [data-testid="stVerticalBlock"] > div { margin-top: -0.5rem !important; }
-    
-    /* ボタンの余白調整 */
-    .stButton > button { margin-top: 0.1rem !important; padding: 0.2rem !important; }
     
     /* ログイン・成績表示エリアのスタイル */
     .stats-box {
@@ -233,13 +229,13 @@ if "recognized_text" not in st.session_state: st.session_state.recognized_text =
 if "canvas_key_id" not in st.session_state: st.session_state.canvas_key_id = 0
 if "has_graded" not in st.session_state: st.session_state.has_graded = False
 
+# --- コールバック関数の定義 (仮想DOMクラッシュの完全防止) ---
 def get_next_question():
     st.session_state.current_pool_idx = (st.session_state.current_pool_idx + 1) % len(df)
     st.session_state.result = None
     st.session_state.recognized_text = ""
     st.session_state.canvas_key_id += 1
     st.session_state.has_graded = False
-    st.rerun()
 
 # --- ユーザーログイン領域 (サイドバー) ---
 st.sidebar.markdown("### 👤 ユーザーログイン")
@@ -262,10 +258,10 @@ if not df.empty:
     with col_s1:
         stroke_width = st.select_slider("ペンの太さ", options=range(1, 11), value=6)
     with col_btn:
-        if st.button("🔄 次へ", use_container_width=True):
-            get_next_question()
+        # safeなコールバック呼び出しにより st.rerun の2重送信バグを根絶
+        st.button("🔄 次へ", use_container_width=True, on_click=get_next_question)
 
-    # キャンバス (縦幅を200にして1画面に確実に収める)
+    # キャンバス (縦幅を200にし、安全な一意のキーマウントで1画面に配置)
     canvas_result = st_canvas(
         fill_color="rgba(255, 165, 0, 0.3)",
         stroke_width=stroke_width,
@@ -274,62 +270,62 @@ if not df.empty:
         height=200, 
         width=700,
         drawing_mode="freedraw",
-        key=f"canvas_q_{st.session_state.canvas_key_id}",
+        key=f"canvas_q_stable_key_{st.session_state.canvas_key_id}",
         update_streamlit=True,
     )
 
     if st.button("✅ 採点する", use_container_width=True, type="primary"):
         if canvas_result.image_data is not None:
-            with st.spinner("手書き文字を解析中..."):
-                img_data = canvas_result.image_data.astype('uint8')
-                img_rgb = cv2.cvtColor(img_data, cv2.COLOR_RGBA2RGB)
+            img_data = canvas_result.image_data.astype('uint8')
+            img_rgb = cv2.cvtColor(img_data, cv2.COLOR_RGBA2RGB)
+            
+            # 文字が書かれている範囲のクロップ(トリミング)
+            gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
+            inv = cv2.bitwise_not(gray)
+            coords = cv2.findNonZero(inv)
+            
+            if coords is not None:
+                x, y, w, h = cv2.boundingRect(coords)
+                pad = 20
+                img_cropped = img_rgb[max(0, y-pad):min(img_rgb.shape[0], y+h+pad), 
+                                      max(0, x-pad):min(img_rgb.shape[1], x+w+pad)]
                 
-                # 文字が書かれている範囲のクロップ(トリミング)
-                gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
-                inv = cv2.bitwise_not(gray)
-                coords = cv2.findNonZero(inv)
+                # OpenCVを使用した二値化＆輪郭強調
+                processed_img = preprocess_image(img_cropped)
                 
-                if coords is not None:
-                    x, y, w, h = cv2.boundingRect(coords)
-                    pad = 20
-                    img_cropped = img_rgb[max(0, y-pad):min(img_rgb.shape[0], y+h+pad), 
-                                          max(0, x-pad):min(img_rgb.shape[1], x+w+pad)]
+                try:
+                    # ローカル動作のEasyOCRにて文字認識
+                    ocr_results = reader.readtext(processed_img, detail=0, paragraph=False)
+                    recognized_raw = "".join(ocr_results)
                     
-                    # OpenCVを使用した二値化＆輪郭強調
-                    processed_img = preprocess_image(img_cropped)
+                    # 正答候補（スラッシュ区切り）をリスト化
+                    possible_answers = [a.strip() for a in raw_answer.split('/')]
+                    is_correct = judge_answer(recognized_raw, possible_answers)
                     
-                    try:
-                        # ローカル動作のEasyOCRにて文字認識
-                        ocr_results = reader.readtext(processed_img, detail=0, paragraph=False)
-                        recognized_raw = "".join(ocr_results)
-                        
-                        # 正答候補（スラッシュ区切り）をリスト化
-                        possible_answers = [a.strip() for a in raw_answer.split('/')]
-                        is_correct = judge_answer(recognized_raw, possible_answers)
-                        
-                        result_str = "正解" if is_correct else "不正解"
-                        
-                        # 初回採点時のみ履歴をCSVファイルに書き込み
-                        if not st.session_state.has_graded:
-                            save_log(username, q_id, question, result_str)
-                            st.session_state.has_graded = True
-                        
-                        # クリーニングされた表示用の認識文字
-                        clean_text = normalize_text(recognized_raw)
-                        st.session_state.recognized_text = clean_text if clean_text else "認識不能"
-                        st.session_state.result = result_str
-                    except Exception as e:
-                        st.error(f"OCR処理中にエラーが発生しました: {e}")
-                else:
-                    st.warning("キャンバスに文字が記入されていません。")
+                    result_str = "正解" if is_correct else "不正解"
+                    
+                    # 初回採点時のみ履歴をCSVファイルに書き込み
+                    if not st.session_state.has_graded:
+                        save_log(username, q_id, question, result_str)
+                        st.session_state.has_graded = True
+                    
+                    # クリーニングされた表示用の認識文字
+                    clean_text = normalize_text(recognized_raw)
+                    st.session_state.recognized_text = clean_text if clean_text else "認識不能"
+                    st.session_state.result = result_str
+                except Exception as e:
+                    st.error(f"OCR処理中にエラーが発生しました: {e}")
+            else:
+                st.warning("キャンバスに文字が記入されていません。")
 
-    # 結果表示および累積成績表示
+    # 結果表示および累積成績表示（DOM崩壊を避けるためのプレーンプレースホルダー設計）
+    result_box = st.empty()
     if st.session_state.result:
         if st.session_state.result == "正解":
             st.balloons()
-            st.success(f"🎊 **正解！** (認識: {st.session_state.recognized_text})")
+            result_box.success(f"🎊 **正解！** (認識: {st.session_state.recognized_text})")
         else:
-            st.error(f"😭 **不正解** (認識: {st.session_state.recognized_text})")
+            result_box.error(f"😭 **不正解** (認識: {st.session_state.recognized_text})")
             st.info(f"正解: **{raw_answer.replace('/', ' / ')}**")
         
         # ユーザー履歴をCSVから読み込み、最新の累積成績を表示
