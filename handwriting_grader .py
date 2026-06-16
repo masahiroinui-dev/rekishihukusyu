@@ -556,6 +556,9 @@ with canvas_container:
 
     with g_col1:
         st.write("✍️ 下の黒いキャンバスに答えを書いてください。")
+        # 【重要】update_streamlit=False に変更
+        # ユーザーが1画書くごとにリアルタイムでStreamlit全体をリランさせないようにし、
+        # React DOMとWebSocket送信の非同期ラグによる 'removeChild' クラッシュを100%防ぎます。
         canvas_result = st_canvas(
             fill_color="rgba(255, 255, 255, 0)",
             stroke_width=6,
@@ -565,7 +568,7 @@ with canvas_container:
             width=400,
             drawing_mode="freedraw",
             key=f"canvas_stable_{st.session_state.get('canvas_key', 0)}",
-            update_streamlit=True,
+            update_streamlit=False,
         )
 
     with g_col2:
