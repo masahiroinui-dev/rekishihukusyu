@@ -13,7 +13,7 @@ import base64
 # --- 設定 ---
 st.set_page_config(page_title="歴史手書きクエスト - 漢字で答える歴史ゲーム", layout="centered")
 
-# --- Streamlitのバージョンに合わせた安全な再起動ヘルパー ---
+# --- Streamlitのバージョンに合わせた安全な再起動ヘルパー (必要な自動遷移のみに使用) ---
 def safe_rerun():
     if hasattr(st, "rerun"):
         st.rerun()
@@ -367,9 +367,7 @@ if "username" not in st.session_state:
             st.session_state.username = username_input
             st.session_state.user_stats = load_user_stats(username_input)
             st.success(f"ようこそ、{username_input} さん！データ読み込み完了。")
-            safe_rerun()
-        else:
-            st.warning("名前を入力してください。")
+            # ボタン押下による自動リランを利用するため、safe_rerun() を削除
     st.stop()
 
 # ----------------- ログイン後のステータス表示 -----------------
@@ -387,7 +385,7 @@ with st.sidebar:
     if st.button("🚪 別のユーザーでログイン"):
         del st.session_state.username
         del st.session_state.user_stats
-        safe_rerun()
+        # ボタン押下による自動リランを利用するため、safe_rerun() を削除
 
 # ----------------- ゲームが開始されていないとき -----------------
 if not st.session_state.game_active and not st.session_state.game_over:
@@ -396,7 +394,7 @@ if not st.session_state.game_active and not st.session_state.game_over:
         <h3>⚔️ クエストに挑戦する準備はできましたか？ ⚔️</h3>
         <p>1回につきランダムに10問出題されます。<br>
         持ちライフは <b>3つ</b> 。間違えるとライフが減少し、0になるとゲームオーバーです！<br>
-        連続で正解すると <b>コンボボーナス</b> が発生し、スコアが跳ね上がります！</p>
+        連続で正解すると <b>コンボボーナス</b> が発生し、スコアが挑ね上がります！</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -404,7 +402,7 @@ if not st.session_state.game_active and not st.session_state.game_over:
     with col1:
         if st.button("🔥 クエスト開始！ (10問)", use_container_width=True, type="primary"):
             init_game_state()
-            safe_rerun()
+            # ボタン押下による自動リランを利用するため、safe_rerun() を削除
     with col2:
         with st.expander("📝 あなたの過去の回答ログを表示"):
             logs_df = get_answer_logs(username)
@@ -453,11 +451,11 @@ if st.session_state.game_over:
     
     if st.button("🔄 もう一度クエストに挑戦する", use_container_width=True, type="primary"):
         init_game_state()
-        safe_rerun()
+        # ボタン押下による自動リランを利用するため、safe_rerun() を削除
     if st.button("🏠 ロビー（トップ）に戻る", use_container_width=True):
         st.session_state.game_active = False
         st.session_state.game_over = False
-        safe_rerun()
+        # ボタン押下による自動リランを利用するため、safe_rerun() を削除
     st.stop()
 
 # ----------------- プレイ中のゲーム画面 -----------------
@@ -471,6 +469,7 @@ if len(q_list) == 0 or current_pos >= len(q_list) or st.session_state.lives <= 0
     # 安全なStreamlit組み込みのダブル演出（紙吹雪 ＋ 風船）
     st.snow()
     st.balloons()
+    # ボタンクリックのコンテキストではなく、内部ステータス遷移による処理のため、ここだけ安全にリランを実行
     safe_rerun()
 else:
     current_q_idx = q_list[current_pos]
@@ -530,7 +529,7 @@ else:
             st.session_state.canvas_key += 1
             st.session_state.has_evaluated = False
             st.session_state.result_status = None
-            safe_rerun()
+            # ボタンクリックによる自動リランを利用するため、safe_rerun() を削除
 
     # ----------------- OCR判定処理 -----------------
     if submit_btn:
@@ -587,7 +586,7 @@ else:
                             st.session_state.earned_this_turn
                         )
                         
-                        safe_rerun()
+                        # ボタンクリックによる自動リランを利用するため、safe_rerun() を削除
                     except Exception as e:
                         st.error(f"判定エラー: {e}")
             else:
@@ -620,11 +619,11 @@ else:
             st.session_state.has_evaluated = False
             st.session_state.result_status = None
             st.session_state.canvas_key += 1
-            safe_rerun()
+            # ボタンクリックによる自動リランを利用するため、safe_rerun() を削除
 
     # ----------------- ゲームの中断 -----------------
     st.markdown("<br><br>", unsafe_allow_html=True)
     if st.button("🏳️ クエストを断念してリザルトへ進む", use_container_width=True, help="現在のスコアでゲームを終了します"):
         st.session_state.game_over = True
         st.session_state.game_active = False
-        safe_rerun()
+        # ボタンクリックによる自動リランを利用するため、safe_rerun() を削除
