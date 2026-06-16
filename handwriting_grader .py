@@ -12,7 +12,7 @@ from datetime import datetime
 # --- 設定 ---
 st.set_page_config(page_title="歴史手書きクエスト - 漢字で答える歴史ゲーム", layout="centered")
 
-# --- CSS: ゲーミフィケーションデザイン (DOMレイアウト固定型) ---
+# --- CSS: ゲーミフィケーションデザイン (DOMレイアウト完全固定・常駐型) ---
 st.markdown("""
     <style>
     /* 全体のコンテナ調整 */
@@ -331,6 +331,9 @@ def init_game_state():
     st.session_state.ocr_text = ""
     st.session_state.canvas_key = 0
 
+# --- セッションステート初期化 ---
+if "screen" not in st.session_state:
+    st.session_state.screen = "login"
 if "game_active" not in st.session_state:
     st.session_state.game_active = False
 if "game_over" not in st.session_state:
@@ -338,12 +341,19 @@ if "game_over" not in st.session_state:
 if "user_stats" not in st.session_state:
     st.session_state.user_stats = None
 
-# --- UI構築 ---
-st.markdown('<div class="game-title">⚔️ 歴史手書きクエスト ⚔️</div>', unsafe_allow_html=True)
-st.markdown("<p style='text-align: center; color: #9e9e9e;'>【出題範囲: 鎌倉・室町・戦国時代等 (q0187〜q0361)】正確な漢字手書きでハイスコアを狙え！</p>", unsafe_allow_html=True)
-
-# ----------------- ログインセクション -----------------
+# ログイン状態の確認・強制画面制御
 if "username" not in st.session_state:
+    st.session_state.screen = "login"
+elif not st.session_state.game_active and not st.session_state.game_over:
+    st.session_state.screen = "lobby"
+elif st.session_state.game_over:
+    st.session_state.screen = "result"
+else:
+    st.session_state.screen = "game"
+
+
+# --- 1. [LOGIN SCREEN] ---
+if st.session_state.screen == "login":
     st.subheader("👤 冒険者登録 / ログイン")
     username_input = st.text_input("プレイヤー名を入力してください:", max_chars=12, placeholder="例: レキシ丸").strip()
     
@@ -351,29 +361,33 @@ if "username" not in st.session_state:
         if username_input:
             st.session_state.username = username_input
             st.session_state.user_stats = load_user_stats(username_input)
-            st.success(f"ようこそ、{username_input} さん！データ読み込み完了。")
-            st.button("ロビーへ移動") # 一段階クリックを挟むことで安全な状態更新
-    st.stop()
+            st.session_state.screen = "lobby"
+            st.success(f"ようこそ、{username_input} さん！ロビーへ進みます。")
+            st.rerun()
+        else:
+            st.warning("名前を入力してください。")
 
-# ----------------- ログイン後のステータス表示 -----------------
-username = st.session_state.username
-stats = st.session_state.user_stats
 
-with st.sidebar:
-    st.subheader(f"🛡️ プレイヤー: {username}")
-    st.metric("🏆 最高ハイスコア", f"{stats['high_score']} pts")
-    st.metric("🔥 最大コンボ", f"{stats['max_combo']} 連鎖")
-    st.metric("📊 累計正解率", f"{ (stats['correct_answers']/stats['total_questions']*100) if stats['total_questions'] > 0 else 0:.1f} %")
-    st.write(f"🎮 挑戦回数: {stats['total_games']} 回")
-    
-    st.markdown("---")
-    if st.button("🚪 別のユーザーでログイン"):
-        del st.session_state.username
-        del st.session_state.user_stats
-        st.button("ログイン画面へリセット")
+# --- 2. [LOBBY SCREEN] ---
+if st.session_state.screen == "lobby":
+    username = st.session_state.username
+    stats = st.session_state.user_stats
 
-# ----------------- ゲームが開始されていないとき (ロビー) -----------------
-if not st.session_state.game_active and not st.session_state.game_over:
+    # サイドバーはゲーム中以外も共通表示
+    with st.sidebar:
+        st.subheader(f"🛡️ プレイヤー: {username}")
+        st.metric("🏆 最高ハイスコア", f"{stats['high_score']} pts")
+        st.metric("🔥 最大コンボ", f"{stats['max_combo']} 連鎖")
+        st.metric("📊 累計正解率", f"{ (stats['correct_answers']/stats['total_questions']*100) if stats['total_questions'] > 0 else 0:.1f} %")
+        st.write(f"🎮 挑戦回数: {stats['total_games']} 回")
+        
+        st.markdown("---")
+        if st.button("🚪 別のユーザーでログイン"):
+            del st.session_state.username
+            del st.session_state.user_stats
+            st.session_state.screen = "login"
+            st.rerun()
+
     st.markdown("""
     <div style="background-color: #1e1e24; padding: 1.5rem; border-radius: 15px; border: 1px solid #333; text-align: center;">
         <h3>⚔️ クエストに挑戦する準備はできましたか？ ⚔️</h3>
@@ -387,7 +401,8 @@ if not st.session_state.game_active and not st.session_state.game_over:
     with col1:
         if st.button("🔥 クエスト開始！ (10問)", use_container_width=True, type="primary"):
             init_game_state()
-            st.button("対戦画面へ移行する")
+            st.session_state.screen = "game"
+            st.rerun()
     with col2:
         with st.expander("📝 あなたの過去の回答ログを表示"):
             logs_df = get_answer_logs(username)
@@ -395,10 +410,21 @@ if not st.session_state.game_active and not st.session_state.game_over:
                 st.dataframe(logs_df.sort_values(by="datetime", ascending=False), use_container_width=True)
             else:
                 st.info("まだ回答ログがありません。まずはクエストに挑戦してみましょう！")
-    st.stop()
 
-# ----------------- ゲームオーバー画面 (リザルト) -----------------
-if st.session_state.game_over:
+
+# --- 3. [RESULT SCREEN] ---
+if st.session_state.screen == "result":
+    username = st.session_state.username
+    stats = st.session_state.user_stats
+
+    with st.sidebar:
+        st.subheader(f"🛡️ プレイヤー: {username}")
+        st.metric("🏆 最高ハイスコア", f"{stats['high_score']} pts")
+        st.metric("🔥 最大コンボ", f"{stats['max_combo']} 連鎖")
+        st.metric("📊 累計正解率", f"{ (stats['correct_answers']/stats['total_questions']*100) if stats['total_questions'] > 0 else 0:.1f} %")
+        st.write(f"🎮 挑戦回数: {stats['total_games']} 回")
+        st.markdown("---")
+
     stats_updated = False
     if st.session_state.score > stats["high_score"]:
         stats["high_score"] = st.session_state.score
@@ -407,7 +433,6 @@ if st.session_state.game_over:
         stats["max_combo"] = st.session_state.combo
         stats_updated = True
     
-    # 統計情報の更新 (1回だけ保存するための重複排除)
     if "stats_saved" not in st.session_state or not st.session_state.stats_saved:
         stats["total_games"] += 1
         stats["total_questions"] += st.session_state.answered_count
@@ -442,162 +467,195 @@ if st.session_state.game_over:
         if st.button("🔄 もう一度クエストに挑戦", use_container_width=True, type="primary"):
             st.session_state.stats_saved = False
             init_game_state()
-            st.button("新ゲームを準備しました")
+            st.session_state.screen = "game"
+            st.rerun()
     with col_btn2:
         if st.button("🏠 ロビー（トップ）に戻る", use_container_width=True):
             st.session_state.stats_saved = False
             st.session_state.game_active = False
             st.session_state.game_over = False
-            st.button("ロビーへ戻ります")
-    st.stop()
+            st.session_state.screen = "lobby"
+            st.rerun()
 
-# ----------------- プレイ中のゲーム画面 (レイアウト完全固定構造) -----------------
-current_pos = st.session_state.current_quiz_pos
-q_list = st.session_state.q_index_list
 
-# すべての設問が終わった、またはライフが尽きた場合の終了処理
-if len(q_list) == 0 or current_pos >= len(q_list) or st.session_state.lives <= 0:
-    st.session_state.game_over = True
-    st.session_state.game_active = False
-    st.info("🏁 挑戦終了！リザルトの作成を行います。下のボタンを押してください。")
-    if st.button("🏁 結果を見る", type="primary", use_container_width=True):
-        pass # ボタン押下自体でゲームオーバー画面へ切り替わります
-    st.stop()
+# --- 4. [GAME SCREEN & CONSTANT CANVAS RENDERING] ---
+# Reactの仮想DOMクラッシュ（removeChild）を防ぐため、st_canvasはログイン/ロビー/結果中も含めて
+# 「常に裏で実行（Pythonコードを通過）」させ、CSSを用いて見えなくさせます。
 
-# 1. ステータスバー（固定配置）
-hearts_html = "".join(['<span class="heart-active">❤️</span>' for _ in range(st.session_state.lives)])
-hearts_broken_html = "".join(['<span class="heart-broken">🖤</span>' for _ in range(3 - st.session_state.lives)])
+# キャンバス用問題の安全な初期値確保
+if "q_index_list" in st.session_state and len(st.session_state.q_index_list) > 0:
+    g_curr_pos = st.session_state.current_quiz_pos
+    g_list = st.session_state.q_index_list
+    # 配列外アクセス保護
+    if g_curr_pos >= len(g_list):
+        g_curr_pos = len(g_list) - 1
+    g_idx = g_list[g_curr_pos]
+    g_row = df_questions.iloc[g_idx]
+    g_qid = g_row["q_id"]
+    g_question = g_row["question"]
+    g_model_answer = g_row["answer"]
+else:
+    g_curr_pos = 0
+    g_list = []
+    g_qid = "q0000"
+    g_question = "準備中..."
+    g_model_answer = ""
 
-st.markdown(f"""
-    <div class="status-container">
-        <div class="status-item">🏆 SCORE: <span class="status-val">{st.session_state.score}</span></div>
-        <div class="status-item">🔥 COMBO: <span class="status-val">{st.session_state.combo}</span></div>
-        <div class="status-item">💖 LIFE: {hearts_html}{hearts_broken_html}</div>
-    </div>
-""", unsafe_allow_html=True)
+# ゲーム画面、または裏でのキャンバス常駐用プレースホルダー
+canvas_container = st.container()
 
-# 2. 進捗プログレスバー（固定配置）
-progress_val = (current_pos + 1) / len(q_list) if len(q_list) > 0 else 1.0
-st.progress(progress_val, text=f"進捗: {current_pos + 1} / {len(q_list)} 問目")
+with canvas_container:
+    # 現在の画面が 'game' でない場合、CSSでキャンバスとゲームUI要素をブラウザ上で完全非表示にする
+    # これにより、ReactはDOMノードの削除（アンマウント）を行わず非表示にするだけになり、クラッシュが100%防げます。
+    if st.session_state.screen != "game":
+        st.markdown("""
+            <style>
+            div[data-testid="stCanvas"] { display: none !important; }
+            .stable-game-layout { display: none !important; }
+            </style>
+        """, unsafe_allow_html=True)
 
-# 3. 問題提示カード（固定配置）
-current_q_idx = q_list[current_pos]
-quiz_row = df_questions.iloc[current_q_idx]
-q_id = quiz_row["q_id"]
-question = quiz_row["question"]
-model_answer = quiz_row["answer"]
-
-st.markdown(f"""
-    <div class="quiz-card">
-        <div class="quiz-num">問題 ID: {q_id}</div>
-        <div class="quiz-text">{question}</div>
-    </div>
-""", unsafe_allow_html=True)
-
-# 4. 手書きキャンバスセクション（固定配置）
-col_canvas, col_control = st.columns([2, 1])
-
-with col_canvas:
-    st.write("✍️ 下の黒いキャンバスに、**マウスや指(タブレット)**で答えを書いてください。")
-    canvas_result = st_canvas(
-        fill_color="rgba(255, 255, 255, 0)",
-        stroke_width=6,
-        stroke_color="#FFFFFF",
-        background_color="#000000",
-        height=180,
-        width=400,
-        drawing_mode="freedraw",
-        key=f"canvas_{st.session_state.canvas_key}",
-        update_streamlit=True,
-    )
-
-# 5. 操作コントロールパネル（固定配置）
-with col_control:
-    st.markdown("<br>", unsafe_allow_html=True)
-    submit_btn = st.button("🔥 判定する！", use_container_width=True, type="primary", disabled=st.session_state.has_evaluated)
+    # 安定したゲーム画面レイアウト（アンマウントされない枠組み）
+    st.markdown('<div class="stable-game-layout">', unsafe_allow_html=True)
     
-    if st.button("🧹 キャンバスをクリア", use_container_width=True):
-        st.session_state.canvas_key += 1
-        st.session_state.has_evaluated = False
-        st.session_state.result_status = None
-        st.button("リセット完了")
+    # 判定状態に応じた自動遷移
+    if st.session_state.game_active:
+        if len(g_list) == 0 or st.session_state.current_quiz_pos >= len(g_list) or st.session_state.lives <= 0:
+            st.session_state.game_over = True
+            st.session_state.game_active = False
+            st.session_state.screen = "result"
+            st.rerun()
 
-# 6. OCR判定処理とインライン結果表示（空のコンポーネントによる安全なプレイスホルダー管理）
-result_placeholder = st.empty()
+    # ステータスバー
+    g_hearts = "".join(['<span class="heart-active">❤️</span>' for _ in range(st.session_state.get('lives', 3))])
+    g_broken_hearts = "".join(['<span class="heart-broken">🖤</span>' for _ in range(3 - st.session_state.get('lives', 3))])
+    
+    st.markdown(f"""
+        <div class="status-container">
+            <div class="status-item">🏆 SCORE: <span class="status-val">{st.session_state.get('score', 0)}</span></div>
+            <div class="status-item">🔥 COMBO: <span class="status-val">{st.session_state.get('combo', 0)}</span></div>
+            <div class="status-item">💖 LIFE: {g_hearts}{g_broken_hearts}</div>
+        </div>
+    """, unsafe_allow_html=True)
 
-if submit_btn:
-    if canvas_result is not None and canvas_result.image_data is not None:
-        img_data = canvas_result.image_data
-        if np.sum(img_data[:, :, 3]) > 0:
-            with st.spinner("手書き文字をAIが解読中..."):
-                try:
-                    pil_img = Image.fromarray(img_data.astype('uint8'), 'RGBA')
-                    processed_img = preprocess_image(pil_img)
-                    
-                    img_np = np.array(processed_img)
-                    ocr_results = reader.readtext(img_np)
-                    
-                    detected_text = ""
-                    if ocr_results:
-                        detected_text = "".join([res[1] for res in ocr_results]).strip()
-                    
-                    if not detected_text:
-                        detected_text = "（読み取れませんでした）"
-                    
-                    st.session_state.ocr_text = detected_text
-                    
-                    is_correct = judge_answer(detected_text, model_answer)
-                    st.session_state.has_evaluated = True
-                    st.session_state.answered_count += 1
-                    
-                    if is_correct:
-                        st.session_state.result_status = "correct"
-                        st.session_state.combo += 1
-                        st.session_state.correct_count += 1
-                        earned = 100 + (st.session_state.combo - 1) * 20
-                        st.session_state.score += earned
-                        st.session_state.earned_this_turn = earned
-                    else:
-                        st.session_state.result_status = "incorrect"
-                        st.session_state.lives -= 1
-                        st.session_state.combo = 0
-                        st.session_state.earned_this_turn = 0
+    # プログレスバー
+    g_total = len(g_list) if len(g_list) > 0 else 10
+    g_prog_val = (g_curr_pos + 1) / g_total
+    st.progress(g_prog_val, text=f"進捗: {g_curr_pos + 1} / {g_total} 問目")
+
+    # 問題カード
+    st.markdown(f"""
+        <div class="quiz-card">
+            <div class="quiz-num">問題 ID: {g_qid}</div>
+            <div class="quiz-text">{g_question}</div>
+        </div>
+    """, unsafe_allow_html=True)
+
+    # 左右カラム配置
+    g_col1, g_col2 = st.columns([2, 1])
+
+    with g_col1:
+        st.write("✍️ 下の黒いキャンバスに答えを書いてください。")
+        canvas_result = st_canvas(
+            fill_color="rgba(255, 255, 255, 0)",
+            stroke_width=6,
+            stroke_color="#FFFFFF",
+            background_color="#000000",
+            height=180,
+            width=400,
+            drawing_mode="freedraw",
+            key=f"canvas_stable_{st.session_state.get('canvas_key', 0)}",
+            update_streamlit=True,
+        )
+
+    with g_col2:
+        st.markdown("<br>", unsafe_allow_html=True)
+        submit_btn = st.button("🔥 判定する！", use_container_width=True, type="primary", disabled=st.session_state.get('has_evaluated', False))
+        
+        if st.button("🧹 キャンバスをクリア", use_container_width=True):
+            st.session_state.canvas_key = st.session_state.get('canvas_key', 0) + 1
+            st.session_state.has_evaluated = False
+            st.session_state.result_status = None
+            st.rerun()
+
+    # 判定実行ロジック
+    if submit_btn and st.session_state.screen == "game":
+        if canvas_result is not None and canvas_result.image_data is not None:
+            img_data = canvas_result.image_data
+            if np.sum(img_data[:, :, 3]) > 0:
+                with st.spinner("手書き文字をAIが解読中..."):
+                    try:
+                        pil_img = Image.fromarray(img_data.astype('uint8'), 'RGBA')
+                        processed_img = preprocess_image(pil_img)
                         
-                    save_answer_log(
-                        username, 
-                        q_id, 
-                        question, 
-                        model_answer, 
-                        detected_text, 
-                        is_correct, 
-                        st.session_state.earned_this_turn
-                    )
-                except Exception as e:
-                    st.error(f"判定エラー: {e}")
+                        img_np = np.array(processed_img)
+                        ocr_results = reader.readtext(img_np)
+                        
+                        detected_text = ""
+                        if ocr_results:
+                            detected_text = "".join([res[1] for res in ocr_results]).strip()
+                        
+                        if not detected_text:
+                            detected_text = "（読み取れませんでした）"
+                        
+                        st.session_state.ocr_text = detected_text
+                        st.session_state.has_evaluated = True
+                        st.session_state.answered_count += 1
+                        
+                        is_correct = judge_answer(detected_text, g_model_answer)
+                        
+                        if is_correct:
+                            st.session_state.result_status = "correct"
+                            st.session_state.combo += 1
+                            st.session_state.correct_count += 1
+                            earned = 100 + (st.session_state.combo - 1) * 20
+                            st.session_state.score += earned
+                            st.session_state.earned_this_turn = earned
+                        else:
+                            st.session_state.result_status = "incorrect"
+                            st.session_state.lives -= 1
+                            st.session_state.combo = 0
+                            st.session_state.earned_this_turn = 0
+                            
+                        save_answer_log(
+                            st.session_state.username, 
+                            g_qid, 
+                            g_question, 
+                            g_model_answer, 
+                            detected_text, 
+                            is_correct, 
+                            st.session_state.earned_this_turn
+                        )
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"判定エラー: {e}")
+            else:
+                st.warning("⚠️ キャンバスに何も書かれていません！")
+
+    # 結果表示
+    if st.session_state.get('has_evaluated', False):
+        st.markdown("---")
+        if st.session_state.result_status == "correct":
+            st.success(f"🎯 **正解！** 手書き認識: 「{st.session_state.ocr_text}」 (+{st.session_state.earned_this_turn} pts)")
+            st.markdown(f'<div class="combo-badge">🔥 {st.session_state.combo} COMBO</div>', unsafe_allow_html=True)
         else:
-            st.warning("⚠️ キャンバスに何も書かれていません！")
+            st.error(f"❌ **不正解** 手書き認識: 「{st.session_state.ocr_text}」")
+            st.info(f"正解は **{g_model_answer.replace('/', ' / ')}** でした。")
+            st.warning(f"💔 ライフが1つ減少しました。残りライフ: {st.session_state.lives}")
 
-# 7. 判定結果のカード表示（静的レイアウトとして固定）
-if st.session_state.has_evaluated:
-    st.markdown("---")
-    if st.session_state.result_status == "correct":
-        st.success(f"🎯 **正解！** 手書き認識: 「{st.session_state.ocr_text}」 (+{st.session_state.earned_this_turn} pts)")
-        st.markdown(f'<div class="combo-badge">🔥 {st.session_state.combo} COMBO</div>', unsafe_allow_html=True)
-    else:
-        st.error(f"❌ **不正解** 手書き認識: 「{st.session_state.ocr_text}」")
-        st.info(f"正解は **{model_answer.replace('/', ' / ')}** でした。")
-        st.warning(f"💔 ライフが1つ減少しました。残りライフ: {st.session_state.lives}")
+        if st.button("➡️ 次の問題へ進む", use_container_width=True, type="primary"):
+            st.session_state.current_quiz_pos += 1
+            st.session_state.has_evaluated = False
+            st.session_state.result_status = None
+            st.session_state.canvas_key = st.session_state.get('canvas_key', 0) + 1
+            st.rerun()
 
-    if st.button("➡️ 次の問題へ進む", use_container_width=True, type="primary"):
-        st.session_state.current_quiz_pos += 1
-        st.session_state.has_evaluated = False
-        st.session_state.result_status = None
-        st.session_state.canvas_key += 1
-        st.button("次へ進みます")
+    # ゲームの中断
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    if st.button("🏳️ クエストを断念してリザルトへ進む", use_container_width=True, help="現在のスコアでゲームを終了します"):
+        st.session_state.game_over = True
+        st.session_state.game_active = False
+        st.session_state.screen = "result"
+        st.rerun()
 
-# ----------------- ゲームの中断 -----------------
-st.markdown("<br><br>", unsafe_allow_html=True)
-if st.button("🏳️ クエストを断念してリザルトへ進む", use_container_width=True, help="現在のスコアでゲームを終了します"):
-    st.session_state.game_over = True
-    st.session_state.game_active = False
-    st.button("確認：リザルト画面に移行します")
+    st.markdown('</div>', unsafe_allow_html=True)
