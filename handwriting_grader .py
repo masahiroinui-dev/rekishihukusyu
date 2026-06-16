@@ -20,112 +20,6 @@ def safe_rerun():
     else:
         st.experimental_rerun()
 
-# --- 効果音再生用ヘルパー (React DOM クラッシュを100%回避する iframe 直接埋め込み方式) ---
-def play_sound(sound_type):
-    # サイドバーのミュート設定がオフ、または未設定の場合は再生しない
-    if not st.session_state.get("enable_sound", True):
-        return
-
-    # Web Audio API を用いた合成音生成ロジック
-    if sound_type == "correct":
-        # ピコーンと高めの良い音 (C5 -> E5 -> G5)
-        js_audio_logic = """
-        var ctx = new (window.AudioContext || window.webkitAudioContext)();
-        var osc = ctx.createOscillator();
-        var gain = ctx.createGain();
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(523.25, ctx.currentTime); // C5
-        osc.frequency.setValueAtTime(659.25, ctx.currentTime + 0.1); // E5
-        osc.frequency.setValueAtTime(783.99, ctx.currentTime + 0.2); // G5
-        gain.gain.setValueAtTime(0.08, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.start();
-        osc.stop(ctx.currentTime + 0.4);
-        """
-    elif sound_type == "incorrect":
-        # ブブーと低い残念な音
-        js_audio_logic = """
-        var ctx = new (window.AudioContext || window.webkitAudioContext)();
-        var osc = ctx.createOscillator();
-        var gain = ctx.createGain();
-        osc.type = 'sawtooth';
-        osc.frequency.setValueAtTime(150, ctx.currentTime);
-        osc.frequency.linearRampToValueAtTime(100, ctx.currentTime + 0.3);
-        gain.gain.setValueAtTime(0.08, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.start();
-        osc.stop(ctx.currentTime + 0.3);
-        """
-    elif sound_type == "gameover":
-        # ゲームオーバーの悲しいメロディ
-        js_audio_logic = """
-        var ctx = new (window.AudioContext || window.webkitAudioContext)();
-        var osc = ctx.createOscillator();
-        var gain = ctx.createGain();
-        osc.type = 'triangle';
-        osc.frequency.setValueAtTime(300, ctx.currentTime);
-        osc.frequency.setValueAtTime(250, ctx.currentTime + 0.15);
-        osc.frequency.setValueAtTime(180, ctx.currentTime + 0.3);
-        osc.frequency.setValueAtTime(120, ctx.currentTime + 0.45);
-        gain.gain.setValueAtTime(0.12, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.8);
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.start();
-        osc.stop(ctx.currentTime + 0.8);
-        """
-    elif sound_type == "clear":
-        # ファンファーレ
-        js_audio_logic = """
-        var ctx = new (window.AudioContext || window.webkitAudioContext)();
-        var gain = ctx.createGain();
-        gain.gain.setValueAtTime(0.08, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.2);
-        gain.connect(ctx.destination);
-        
-        function playTone(freq, start, duration) {
-            var osc = ctx.createOscillator();
-            osc.type = 'square';
-            osc.frequency.setValueAtTime(freq, ctx.currentTime + start);
-            osc.connect(gain);
-            osc.start(ctx.currentTime + start);
-            osc.stop(ctx.currentTime + start + duration);
-        }
-        playTone(523.25, 0, 0.15); // C5
-        playTone(659.25, 0.15, 0.15); // E5
-        playTone(783.99, 0.3, 0.15); // G5
-        playTone(1046.50, 0.45, 0.5); // C6
-        """
-    else:
-        return
-
-    # st.components.v1.htmlの代わりに、st.markdownを用いて
-    # Reactの仮想DOM追跡から完全に外れたネイティブな非表示iframeを直接流し込みます。
-    # これにより、React DOM 操作競合によるクラッシュを100%防止します。
-    iframe_html = f"""
-    <!DOCTYPE html>
-    <html>
-    <head><meta charset="utf-8"></head>
-    <body>
-    <script>
-    try {{
-        {js_audio_logic}
-    }} catch(e) {{}}
-    </script>
-    </body>
-    </html>
-    """
-    # エスケープ処理をして安全にsrcdocに引き渡します
-    escaped_html = iframe_html.replace('"', '&quot;').replace('\n', ' ')
-    st.markdown(
-        f'<iframe srcdoc="{escaped_html}" style="display:none; width:0; height:0; border:none;"></iframe>',
-        unsafe_allow_html=True
-    )
-
 # --- CSS: ゲーミフィケーションデザイン ---
 st.markdown("""
     <style>
@@ -437,7 +331,6 @@ def init_game_state():
     st.session_state.lives = 3
     st.session_state.answered_count = 0
     st.session_state.correct_count = 0
-    st.session_state.sound_to_play = None # 音声再生キュー
     
     num_questions = len(df_questions)
     sample_size = min(10, num_questions)
@@ -459,21 +352,12 @@ if "game_over" not in st.session_state:
     st.session_state.game_over = False
 if "user_stats" not in st.session_state:
     st.session_state.user_stats = None
-if "sound_to_play" not in st.session_state:
-    st.session_state.sound_to_play = None
 
 # --- UI構築 ---
 st.markdown('<div class="game-title">⚔️ 歴史手書きクエスト ⚔️</div>', unsafe_allow_html=True)
 st.markdown("<p style='text-align: center; color: #9e9e9e;'>【出題範囲: 鎌倉・室町・戦国時代等 (q0187〜q0361)】正確な漢字手書きでハイスコアを狙え！</p>", unsafe_allow_html=True)
 
 # ----------------- サイドバー設定（ログイン状態＆各種設定） -----------------
-with st.sidebar:
-    st.subheader("⚙️ ゲーム設定")
-    # 効果音を無効化（ミュート）するスイッチを導入
-    enable_sound = st.checkbox("🔊 効果音をオンにする", value=True, key="enable_sound")
-    st.caption("※音が原因でアプリが重くなったり挙動が不安定な場合は、チェックを外してミュートにしてください。")
-    st.markdown("---")
-
 if "username" not in st.session_state:
     st.subheader("👤 冒険者登録 / ログイン")
     username_input = st.text_input("プレイヤー名を入力してください:", max_chars=12, placeholder="例: レキシ丸").strip()
@@ -532,10 +416,6 @@ if not st.session_state.game_active and not st.session_state.game_over:
 
 # ----------------- ゲームオーバー画面 -----------------
 if st.session_state.game_over:
-    # 再生キューにgameoverを入れる
-    if st.session_state.sound_to_play is None:
-        st.session_state.sound_to_play = "gameover"
-
     stats_updated = False
     if st.session_state.score > stats["high_score"]:
         stats["high_score"] = st.session_state.score
@@ -578,11 +458,6 @@ if st.session_state.game_over:
         st.session_state.game_active = False
         st.session_state.game_over = False
         safe_rerun()
-
-    # 音声の遅延実行
-    if st.session_state.sound_to_play:
-        play_sound(st.session_state.sound_to_play)
-        st.session_state.sound_to_play = None
     st.stop()
 
 # ----------------- プレイ中のゲーム画面 -----------------
@@ -593,7 +468,9 @@ q_list = st.session_state.q_index_list
 if len(q_list) == 0 or current_pos >= len(q_list) or st.session_state.lives <= 0:
     st.session_state.game_over = True
     st.session_state.game_active = False
-    st.session_state.sound_to_play = "clear"
+    # 安全なStreamlit組み込みのダブル演出（紙吹雪 ＋ 風船）
+    st.snow()
+    st.balloons()
     safe_rerun()
 else:
     current_q_idx = q_list[current_pos]
@@ -653,7 +530,6 @@ else:
             st.session_state.canvas_key += 1
             st.session_state.has_evaluated = False
             st.session_state.result_status = None
-            st.session_state.sound_to_play = None
             safe_rerun()
 
     # ----------------- OCR判定処理 -----------------
@@ -689,14 +565,17 @@ else:
                             earned = 100 + (st.session_state.combo - 1) * 20
                             st.session_state.score += earned
                             st.session_state.earned_this_turn = earned
-                            # 音声再生は次の描画ステップへキューイングする（Rerun中のクラッシュ防止）
-                            st.session_state.sound_to_play = "correct"
+                            
+                            # トーストによる確実な視覚演出
+                            st.toast(f"🎯 正解！ +{earned} pts (コンボ: {st.session_state.combo})", icon="🔥")
                         else:
                             st.session_state.result_status = "incorrect"
                             st.session_state.lives -= 1
                             st.session_state.combo = 0
                             st.session_state.earned_this_turn = 0
-                            st.session_state.sound_to_play = "incorrect"
+                            
+                            # トーストによるライフ減少演出
+                            st.toast(f"💔 不正解... ライフ減少（残り: {st.session_state.lives}）", icon="💀")
                             
                         save_answer_log(
                             username, 
@@ -741,7 +620,6 @@ else:
             st.session_state.has_evaluated = False
             st.session_state.result_status = None
             st.session_state.canvas_key += 1
-            st.session_state.sound_to_play = None
             safe_rerun()
 
     # ----------------- ゲームの中断 -----------------
@@ -750,10 +628,3 @@ else:
         st.session_state.game_over = True
         st.session_state.game_active = False
         safe_rerun()
-
-# ----------------- 効果音の安全な遅延描画 -----------------
-# 画面構成要素が完全に決定し、最終レンダリングされる手前で iframe 直接描画によって音声をトリガーします。
-# これにより、Reactが動的にDOMを削除する際の不都合や同期ズレを完全に抑え込みます。
-if "sound_to_play" in st.session_state and st.session_state.sound_to_play:
-    play_sound(st.session_state.sound_to_play)
-    st.session_state.sound_to_play = None # 1回鳴らしたら即クリア
