@@ -12,7 +12,7 @@ from datetime import datetime
 # --- 設定 ---
 st.set_page_config(page_title="歴史手書きクイズ", layout="centered")
 
-# --- CSS: シンプルで美しい固定ダークUI ＆ 組み込みツールバーのプレミアム化 ---
+# --- CSS: シンプルで美しい固定ダークUI ＆ GPU安全アニメーションエフェクト ---
 st.markdown("""
     <style>
     /* 全体のコンテナ余白の最適化 */
@@ -125,6 +125,40 @@ st.markdown("""
         margin-bottom: 1rem;
         font-size: 0.85rem;
         color: #ccc;
+    }
+
+    /* 🛡️ 100%安全な正解・不正解時限定のCSSアニメーション（GPU処理） */
+    @keyframes correct-pop {
+        0% { transform: scale(0.95); opacity: 0; }
+        50% { transform: scale(1.03); }
+        100% { transform: scale(1); opacity: 1; }
+    }
+    
+    @keyframes shine-gold {
+        0% { background-position: 0% 50%; }
+        50% { background-position: 100% 50%; }
+        100% { background-position: 0% 50%; }
+    }
+
+    .correct-effect-box {
+        background: linear-gradient(135deg, rgba(76, 175, 80, 0.2), rgba(255, 193, 7, 0.2)) !important;
+        background-size: 200% 200% !important;
+        border: 2px solid #4CAF50 !important;
+        box-shadow: 0 0 20px rgba(76, 175, 80, 0.4) !important;
+        border-radius: 12px;
+        padding: 1.2rem;
+        margin-bottom: 1rem;
+        animation: correct-pop 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards, shine-gold 4s ease infinite;
+    }
+
+    .incorrect-effect-box {
+        background-color: rgba(244, 67, 54, 0.15) !important;
+        border: 2px solid #F44336 !important;
+        box-shadow: 0 0 10px rgba(244, 67, 54, 0.2) !important;
+        border-radius: 12px;
+        padding: 1.2rem;
+        margin-bottom: 1rem;
+        animation: correct-pop 0.3s ease-out forwards;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -545,16 +579,53 @@ if submit_btn and not st.session_state.has_evaluated:
             st.session_state.info_msg = "⚠️ キャンバスに何も書かれていません！"
 
 # 9. 判定結果の表示スロット
+# 🛡️ React DOMの崩壊を防ぐため、固定スロット `st.empty()` の中身を安全にHTMLで上書きして視覚演出を適用。
+# これなら、DOM要素の追加や削除を伴わないため、removeChildエラーは絶対に起きません。
 st.markdown("---")
 result_placeholder = st.empty()
 
-# 判定結果を表示用のテキスト文字列としてシンプルに作成
 if st.session_state.info_msg:
-    result_text = st.session_state.info_msg
+    if st.session_state.result_status == "correct":
+        # ✨ 正解時のプレミアム・ゴールドアニメーションエフェクト
+        html_msg = f"""
+        <div class="correct-effect-box">
+            <h4 style="color: #4CAF50; margin: 0 0 0.5rem 0; font-weight: 800;">🎯 正解！</h4>
+            <p style="margin: 0; color: #ffffff; font-size: 1.1rem; font-weight: bold;">
+                解読文字: <span style="color: #FFC107;">{st.session_state.ocr_text}</span> (+{st.session_state.get('earned_this_turn', 100)} pts)
+            </p>
+            <div class="combo-badge" style="margin-top: 0.5rem;">🔥 {st.session_state.combo} COMBO !</div>
+        </div>
+        """
+    elif st.session_state.result_status == "incorrect":
+        # ❌ 不正解時のフェードインカード
+        html_msg = f"""
+        <div class="incorrect-effect-box">
+            <h4 style="color: #F44336; margin: 0 0 0.5rem 0; font-weight: 800;">❌ 不正解...</h4>
+            <p style="margin: 0 0 0.5rem 0; color: #ffffff; font-size: 1rem;">
+                認識文字: <span style="color: #ccc;">{st.session_state.ocr_text}</span>
+            </p>
+            <p style="margin: 0; color: #FF9800; font-size: 1.05rem; font-weight: bold;">
+                正解: {model_answer.replace('/', ' / ')}
+            </p>
+        </div>
+        """
+    else:
+        # その他お知らせ・警告・自己採点ガイダンス（静的カード）
+        html_msg = f"""
+        <div class="guide-box" style="border: 1px solid #FF9800; background-color: rgba(255, 152, 0, 0.05);">
+            <h4 style="color: #FF9800; margin: 0 0 0.5rem 0; font-weight: bold;">📝 自己判定ガイダンス</h4>
+            <p style="margin: 0; color: #ffffff; font-size: 1rem;">{st.session_state.info_msg}</p>
+        </div>
+        """
 else:
-    result_text = "📋 判定結果：答えを手書きして、上の「🔥 判定する！」ボタンを押してください。"
+    html_msg = """
+    <div class="guide-box" style="background-color: #1e1e24; border: 1px solid #3f3f52;">
+        <h4 style="color: #ccc; margin: 0 0 0.5rem 0;">📋 判定結果待ち</h4>
+        <p style="margin: 0; color: #888; font-size: 0.95rem;">答えを手書きして、上の「🔥 判定する！」ボタンを押してください。</p>
+    </div>
+    """
 
-result_placeholder.write(result_text)
+result_placeholder.markdown(html_msg, unsafe_allow_html=True)
 
 # 10. 🛡️ 自己判定モード時の「○ 正解」「× 不正解」入力ボタン（プレースホルダーと競合しない完全同期型設計）
 # 【絶対的安定】React DOM の崩壊を防ぐため、st.columns構造および自己判定ボタンは常にマウント。
