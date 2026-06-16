@@ -12,7 +12,7 @@ from datetime import datetime
 # --- 設定 ---
 st.set_page_config(page_title="歴史手書きクイズ", layout="centered")
 
-# --- CSS: 極限までシンプルなフラットダークUI ---
+# --- CSS: シンプルで美しい固定ダークUI ＆ 組み込みツールバーのプレミアム化 ---
 st.markdown("""
     <style>
     /* 全体のコンテナ余白の最適化 */
@@ -85,7 +85,7 @@ st.markdown("""
         margin-bottom: 0.5rem !important;
     }
 
-    /* キャンバスツールバーボタンの調整 */
+    /* 🛡️ キャンバス内蔵ツールバーをはっきり見えるように極上スタイリング */
     div[data-testid="stCanvas"] button {
         background-color: #2b2b36 !important;
         border: 1px solid #3f3f52 !important;
@@ -93,11 +93,27 @@ st.markdown("""
         border-radius: 8px !important;
         padding: 6px 12px !important;
         margin-right: 5px !important;
+        transition: all 0.2s ease !important;
     }
     div[data-testid="stCanvas"] button:hover {
         background-color: #ff9800 !important;
         color: #000000 !important;
         border-color: #ff9800 !important;
+    }
+    div[data-testid="stCanvas"] .lucide {
+        color: #ff9800 !important;
+    }
+
+    /* コンボ表示バッジ */
+    .combo-badge {
+        display: inline-block;
+        background: linear-gradient(45deg, #ff5722, #ffc107);
+        color: white;
+        font-weight: bold;
+        padding: 0.25rem 0.6rem;
+        border-radius: 12px;
+        font-size: 0.95rem;
+        margin-top: 5px;
     }
 
     /* ガイド案内 */
@@ -133,16 +149,16 @@ except Exception as e:
 # --- CSV問題データのロードとフィルタリング (q0187〜q0361) ---
 CSV_FILE_PATH = "rekishi_questions.xlsx - Sheet1.csv"
 
+# 🛡️ キャッシュ関数を安全に定義 (この中での st.warning や st.error などのStreamlitUIオブジェクト呼び出しは絶対禁止)
 @st.cache_data
-def load_questions(filepath):
+def load_questions_safe(filepath):
     def create_fallback_data():
         dummy_data = []
         for i in range(187, 362):
             dummy_data.append([f"q{i:04d}", f"【テスト問題 {i}】織田信長が明智光秀に襲われた京都のお寺はどこか？(答え:本能寺)", "本能寺"])
-        return pd.DataFrame(dummy_data, columns=["q_id", "question", "answer"])
+        return pd.DataFrame(dummy_data, columns=["q_id", "question", "answer"]), False # (データ, 読み込み成否)
 
     if not os.path.exists(filepath):
-        st.warning(f"問題ファイル '{filepath}' が見つかりませんでした。テスト用データを使用します。")
         return create_fallback_data()
     
     try:
@@ -155,7 +171,7 @@ def load_questions(filepath):
                 continue
         
         if df is None or df.empty:
-            raise ValueError("CSVデータのパースに失敗しました。")
+            return create_fallback_data()
             
         df = df.iloc[:, :3]
         df.columns = ["q_id", "question", "answer"]
@@ -164,9 +180,11 @@ def load_questions(filepath):
         df["question"] = df["question"].astype(str).str.strip()
         df["answer"] = df["answer"].astype(str).str.strip()
         
-        # q0187 から q0361 までの範囲を抽出
+        # 🛡️ 欠損値(NaN)や数値型が流れ込んだ場合のTypeErrorを完全に防ぐ型安全パーサー
         def get_qid_num(qid):
-            match = re.search(r'\d+', qid)
+            if pd.isna(qid):
+                return 0
+            match = re.search(r'\d+', str(qid))
             return int(match.group()) if match else 0
         
         df["q_num"] = df["q_id"].apply(get_qid_num)
@@ -174,14 +192,18 @@ def load_questions(filepath):
         filtered_df = filtered_df.drop(columns=["q_num"])
         
         if len(filtered_df) == 0:
-            return df
+            return df, True
             
-        return filtered_df
-    except Exception as e:
-        st.error(f"CSVのロードに失敗しました({e})。フォールバックデータで起動します。")
+        return filtered_df, True
+    except Exception:
         return create_fallback_data()
 
-df_questions = load_questions(CSV_FILE_PATH)
+# 安全なロードを実行
+df_questions, load_success = load_questions_safe(CSV_FILE_PATH)
+
+# 万が一CSVのロードに失敗した場合の警告は、キャッシュの外側（安全なエリア）で表示
+if not load_success:
+    st.sidebar.warning("⚠️ 問題ファイルが見つかりません。テスト問題を使用中。")
 
 # --- ユーザーデータ管理機能 ---
 def get_user_file(username, kind="stats"):
