@@ -373,6 +373,7 @@ else:
 
 # --- ボタンクリックコールバック関数 (仮想DOM競合を避けるための100%安全設計) ---
 def handle_clear():
+    # 🛡️ React keyを変更せずに、背景色をトグルさせて手書き領域をリセット（不変DOM）
     st.session_state.canvas_key_offset += 1
     st.session_state.has_evaluated = False
     st.session_state.result_status = None
@@ -485,13 +486,16 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # 6. 手書きエリア (React DOM 崩壊防止のために columns やネストを完全撤廃しフラット配置)
-# 【絶対不変】keyを完全に固定化し、プロパティも変化させないことで iframe の React アンマウントを完全に回避。
-canvas_key = f"canvas_stable_slot_v{st.session_state.canvas_key_offset}"
+# 🛡️ 【絶対不変】React keyを完全に固定化し、プロパティ変更による iframe の React アンマウントを完全に回避。
+# クリア時は、100%安全に background_color をトグル(人間には見分けのつかない微小な色変化)させることで Fabric.js を内部クリアします。
+canvas_key = "immortal_canvas_fixed_key"
+canvas_bg_color = "#000000" if st.session_state.canvas_key_offset % 2 == 0 else "#000001"
+
 canvas_result = st_canvas(
     fill_color="rgba(255, 255, 255, 0)",
     stroke_width=6,
     stroke_color="#FFFFFF",
-    background_color="#000000", # 固定
+    background_color=canvas_bg_color,
     height=180,
     width=400,
     drawing_mode="freedraw",
